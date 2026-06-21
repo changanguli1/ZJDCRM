@@ -16,6 +16,7 @@
     "functions/**/*.ts",
     "tests/integration/**/*.ts",
     "tests/integration/**/*.tsx",
+    "tests/**/*.d.ts",
     "worker-configuration.d.ts"
   ]
 }
