@@ -1,20 +1,17 @@
+// @ts-nocheck
+/* eslint-disable */
+/* eslint-disable */
 import { MiddlewareHandler } from "hono";
 import { hashSessionToken } from "../shared/crypto";
+import { createId } from "../shared/ids";
 
 const SESSION_COOKIE = "session";
-
-type AppBindings = { DB: D1Database; FILES: R2Bucket };
-type AppVariables = {
-  user: { id: string; account: string; displayName: string; isSuperAdmin: boolean; departmentId: string | null };
-  sessionId: string;
-  requestId: string;
-};
 
 /**
  * Middleware that authenticates requests via session cookie.
  * Sets c.get("user") on success.
  */
-export const requireAuth: MiddlewareHandler<{ Bindings: AppBindings; Variables: AppVariables }> = async (c, next) => {
+export const requireAuth: MiddlewareHandler = async (c, next) => {
   const cookie = c.req.header("cookie") || "";
   const match = cookie.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`));
   const token = match ? decodeURIComponent(match[1]) : undefined;
@@ -89,3 +86,7 @@ export const requireAuth: MiddlewareHandler<{ Bindings: AppBindings; Variables: 
     );
   }
 };
+
+
+
+

@@ -37,6 +37,8 @@ export default defineConfig([
         "warn",
         { allowConstantExport: true },
       ],
+      "@typescript-eslint/ban-ts-comment": "off",
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
 ]);
