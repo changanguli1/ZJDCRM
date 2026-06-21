@@ -86,4 +86,15 @@ test.describe("authenticated application", () => {
     await page.getByRole("button", { name: "添加跟进" }).click();
     await expect(page.getByText("完成首次电话跟进")).toBeVisible();
   });
+
+  test("keeps the dashboard usable without horizontal overflow on a narrow viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loginAsAdmin(page);
+    const dimensions = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+    await expect(page.getByRole("heading", { name: "招商看板" })).toBeVisible();
+  });
 });

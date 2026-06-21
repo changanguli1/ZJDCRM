@@ -44,9 +44,9 @@ export default function DashboardPage() {
 
   return (
     <div className="page">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div className="dashboard-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h1>招商看板</h1>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="dashboard-filters" style={{ display: "flex", gap: 8 }}>
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: "4px 8px", border: "1px solid var(--color-border)", borderRadius: 4 }} />
           <span style={{ alignSelf: "center" }}>至</span>
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: "4px 8px", border: "1px solid var(--color-border)", borderRadius: 4 }} />
