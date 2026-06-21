@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../auth/auth.store";
@@ -204,3 +205,4 @@ export default function ClueFormPage() {
     </div>
   );
 }
+

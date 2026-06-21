@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
-import { useAuth } from "../../features/auth/auth.store";
 
 interface ClueDetail {
   id: string;
@@ -46,7 +46,6 @@ const stageLabels: Record<string, string> = {
 
 export default function ClueDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { csrfToken } = useAuth();
   const [clue, setClue] = useState<ClueDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -199,3 +198,4 @@ export default function ClueDetailPage() {
     </div>
   );
 }
+

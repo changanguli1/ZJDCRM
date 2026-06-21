@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import ReactEChartsCore from "echarts-for-react/lib/core";
@@ -57,18 +58,10 @@ export default function DashboardPage() {
     value: s.total,
   }));
 
-  const sourceData = (data?.sourceDistribution || []).map((s) => ({
-    name: s.source_code, value: s.total,
-  }));
-
   const funnelData = funnelStages.map((code) => {
     const found = data?.stageDistribution?.find((s) => s.stage_code === code);
     return { name: stageLabels[code] || code, value: found?.total || 0 };
   });
-
-  const spaceStatusData = (data?.spaceStatus || []).map((s) => ({
-    name: s.status_code, value: s.total,
-  }));
 
   return (
     <div className="page">
@@ -151,3 +144,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

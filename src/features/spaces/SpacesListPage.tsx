@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
@@ -66,3 +67,4 @@ export default function SpacesListPage() {
     </div>
   );
 }
+

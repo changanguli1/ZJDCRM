@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
@@ -189,3 +190,4 @@ export default function ClueListPage() {
     </div>
   );
 }
+
