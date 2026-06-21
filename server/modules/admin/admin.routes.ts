@@ -25,6 +25,18 @@ function adminGuard() {
   };
 }
 
+async function resolveActiveRoleIds(db: D1Database, value: unknown): Promise<string[] | null> {
+  const roleIds = [...new Set((Array.isArray(value) ? value : []).map(String).filter(Boolean))];
+  if (!roleIds.length) return roleIds;
+  const placeholders = roleIds.map(() => "?").join(", ");
+  const rows = await queryAll<{ id: string }>(
+    db,
+    `SELECT id FROM roles WHERE id IN (${placeholders}) AND status = 'active' AND deleted_at IS NULL`,
+    ...roleIds,
+  );
+  return rows.length === roleIds.length ? roleIds : null;
+}
+
 export function registerAdminRoutes(app: Hono): void {
   app.get("/api/settings/public", async (c) => {
     const allowedKeys = ["site_name", "login_text", "announcement", "logo_url"];
@@ -51,9 +63,13 @@ export function registerAdminRoutes(app: Hono): void {
     const total = (await db.prepare("SELECT COUNT(*) as total FROM users WHERE deleted_at IS NULL").first<{ total: number }>())?.total || 0;
     const users = await queryAll(
       db,
-      `SELECT u.id, u.account, u.display_name, u.mobile, u.email, u.department_id, u.status, u.is_super_admin, u.last_login_at, d.name as department_name
+      `SELECT u.id, u.account, u.display_name, u.mobile, u.email, u.department_id, u.status, u.is_super_admin, u.last_login_at, d.name as department_name,
+              GROUP_CONCAT(ur.role_id) AS role_ids
        FROM users u LEFT JOIN departments d ON u.department_id = d.id
-       WHERE u.deleted_at IS NULL ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
+       LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.deleted_at IS NULL
+       WHERE u.deleted_at IS NULL
+       GROUP BY u.id
+       ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
       pageSize, offset,
     );
     return c.json({ ok: true, data: { items: users, total, page, pageSize, totalPages: Math.ceil(total / pageSize) } });
@@ -66,6 +82,9 @@ export function registerAdminRoutes(app: Hono): void {
     const account = String(body.account || "").trim();
     const displayName = String(body.displayName || "").trim();
     const password = String(body.password || "");
+    if (body.isSuperAdmin === true) {
+      return c.json({ ok: false, error: { code: "SINGLE_ADMIN_ONLY", message: "系统只允许一个后台管理员", requestId: c.get("requestId") } }, 400);
+    }
     if (!account || !displayName || password.length < 8) {
       return c.json({
         ok: false,
@@ -86,10 +105,13 @@ export function registerAdminRoutes(app: Hono): void {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, account, account.toLowerCase(), displayName,
       hash, salt, iterations, body.mobile || null, body.email || null,
-      body.departmentId || null, body.status || "active", body.isSuperAdmin ? 1 : 0,
+      body.departmentId || null, body.status || "active", 0,
       now, user.id, now, user.id,
     );
-    const roleIds = Array.isArray(body.roleIds) ? body.roleIds.filter(Boolean) : [];
+    const roleIds = await resolveActiveRoleIds(db, body.roleIds);
+    if (!roleIds) {
+      return c.json({ ok: false, error: { code: "INVALID_ROLE_IDS", message: "包含无效或已停用角色", requestId: c.get("requestId") } }, 400);
+    }
     if (roleIds.length > 0) {
       await batch(db, roleIds.map((roleId: string) => ({
         sql: `INSERT INTO user_roles
@@ -122,6 +144,9 @@ export function registerAdminRoutes(app: Hono): void {
     if (!existing) {
       return c.json({ ok: false, error: { code: "NOT_FOUND", message: "用户不存在", requestId: c.get("requestId") } }, 404);
     }
+    if (existing.is_super_admin === 0 && body.isSuperAdmin === true) {
+      return c.json({ ok: false, error: { code: "SINGLE_ADMIN_ONLY", message: "系统只允许一个后台管理员", requestId: c.get("requestId") } }, 400);
+    }
     const nextStatus = body.status === undefined ? existing.status : String(body.status);
     const nextSuper = body.isSuperAdmin === undefined ? existing.is_super_admin : (body.isSuperAdmin ? 1 : 0);
     if (existing.is_super_admin === 1 && (nextStatus !== "active" || nextSuper === 0)) {
@@ -141,6 +166,10 @@ export function registerAdminRoutes(app: Hono): void {
         }, 409);
       }
     }
+    const requestedRoleIds = body.roleIds === undefined ? undefined : await resolveActiveRoleIds(db, body.roleIds);
+    if (body.roleIds !== undefined && !requestedRoleIds) {
+      return c.json({ ok: false, error: { code: "INVALID_ROLE_IDS", message: "包含无效或已停用角色", requestId: c.get("requestId") } }, 400);
+    }
 
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -150,7 +179,6 @@ export function registerAdminRoutes(app: Hono): void {
       ["email", "email", (value) => value || null],
       ["departmentId", "department_id", (value) => value || null],
       ["status", "status", (value) => value],
-      ["isSuperAdmin", "is_super_admin", (value) => value ? 1 : 0],
     ];
     for (const [bodyKey, column, normalize] of mappings) {
       if (body[bodyKey] !== undefined) {
@@ -161,6 +189,17 @@ export function registerAdminRoutes(app: Hono): void {
     fields.push("updated_at = ?", "updated_by = ?");
     values.push(now, user.id, userId);
     await execute(db, `UPDATE users SET ${fields.join(", ")} WHERE id = ? AND deleted_at IS NULL`, ...values);
+    if (requestedRoleIds !== undefined) {
+      await execute(db, "DELETE FROM user_roles WHERE user_id = ?", userId);
+      if (requestedRoleIds.length > 0) {
+        await batch(db, requestedRoleIds.map((roleId) => ({
+          sql: `INSERT INTO user_roles
+            (id, user_id, role_id, granted_by, granted_at, created_at, created_by, updated_at, updated_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          values: [createId(), userId, roleId, user.id, now, now, user.id, now, user.id],
+        })));
+      }
+    }
     if (nextStatus !== "active") {
       await execute(
         db,
@@ -168,6 +207,43 @@ export function registerAdminRoutes(app: Hono): void {
         now, user.id, now, user.id, userId,
       );
     }
+    return c.json({ ok: true, data: null });
+  });
+
+  app.post("/api/admin/users/:id/reset-password", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const db = c.env.DB;
+    const userId = c.req.param("id");
+    const body = await c.req.json() as Record<string, unknown>;
+    const password = String(body.newPassword || "");
+    const target = await queryOne<{ id: string; is_super_admin: number }>(
+      db,
+      "SELECT id, is_super_admin FROM users WHERE id = ? AND deleted_at IS NULL",
+      userId,
+    );
+    if (!target) {
+      return c.json({ ok: false, error: { code: "NOT_FOUND", message: "用户不存在", requestId: c.get("requestId") } }, 404);
+    }
+    if (target.is_super_admin || password.length < 8) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "仅可重置普通员工的至少 8 位密码", requestId: c.get("requestId") } }, 400);
+    }
+    const now = nowIsoUtc();
+    const { hash, salt, iterations } = await hashPassword(password);
+    await execute(
+      db,
+      "UPDATE users SET password_hash = ?, password_salt = ?, password_iterations = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+      hash, salt, iterations, now, user.id, userId,
+    );
+    await execute(
+      db,
+      "UPDATE sessions SET revoked_at = ?, revoked_by = ?, updated_at = ?, updated_by = ? WHERE user_id = ? AND revoked_at IS NULL",
+      now, user.id, now, user.id, userId,
+    );
+    await writeAuditLog(db, {
+      actorId: user.id, action: "admin:user:reset-password", entityType: "user", entityId: userId,
+      requestId: c.get("requestId"), ipAddress: c.req.header("cf-connecting-ip") || null,
+      userAgent: c.req.header("user-agent") || null, summary: {},
+    });
     return c.json({ ok: true, data: null });
   });
 

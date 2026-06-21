@@ -55,6 +55,12 @@ test.describe("authenticated application", () => {
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page.getByText(`qa-${suffix}`)).toBeVisible();
 
+    const employeeRow = page.getByRole("row", { name: new RegExp(`qa-${suffix}`) });
+    await employeeRow.getByRole("button", { name: "编辑" }).click();
+    await page.getByLabel("编辑姓名 *").fill("QA User Updated");
+    await page.getByRole("button", { name: "保存修改" }).click();
+    await expect(page.getByText("QA User Updated")).toBeVisible();
+
     await page.goto("/imports");
     await page.locator('input[type="file"]').setInputFiles({
       name: "qa-clues.csv",

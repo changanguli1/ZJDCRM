@@ -103,6 +103,31 @@ describe("admin safety and account management", () => {
     expect(response.body.error?.code).toBe("VALIDATION_ERROR");
   });
 
+  it("rejects creating or promoting a second super administrator", async () => {
+    const created = await request("POST", "/api/admin/users", {
+      account: "second-super-admin",
+      displayName: "Second Super Admin",
+      password: "strong-password-123",
+      isSuperAdmin: true,
+    });
+    if (created.body.data?.id) {
+      await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(created.body.data.id).run();
+    }
+    expect(created.status).toBe(400);
+    expect(created.body.error?.code).toBe("SINGLE_ADMIN_ONLY");
+
+    const employee = await request("POST", "/api/admin/users", {
+      account: "no-promotion-user",
+      displayName: "No Promotion User",
+      password: "strong-password-123",
+    });
+    const promoted = await request("PUT", `/api/admin/users/${employee.body.data?.id}`, {
+      isSuperAdmin: true,
+    });
+    expect(promoted.status).toBe(400);
+    expect(promoted.body.error?.code).toBe("SINGLE_ADMIN_ONLY");
+  });
+
   it("creates a user with assigned roles", async () => {
     const now = "2026-06-21T00:00:00.000Z";
     await env.DB.prepare(
@@ -123,6 +148,62 @@ describe("admin safety and account management", () => {
       "SELECT role_id FROM user_roles WHERE user_id = ?",
     ).bind(response.body.data?.id).first<{ role_id: string }>();
     expect(assignment?.role_id).toBe("role-created-user");
+  });
+
+  it("edits an employee profile and replaces assigned roles", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    for (const [id, code] of [["role-edit-a", "edit_a"], ["role-edit-b", "edit_b"]]) {
+      await env.DB.prepare(
+        `INSERT INTO roles
+          (id, code, name, is_system, status, created_at, created_by, updated_at, updated_by)
+         VALUES (?, ?, ?, 0, 'active', ?, 'seed', ?, 'seed')`,
+      ).bind(id, code, code, now, now).run();
+    }
+    const created = await request("POST", "/api/admin/users", {
+      account: "editable-user",
+      displayName: "Before Edit",
+      password: "strong-password-123",
+      roleIds: ["role-edit-a"],
+    });
+    const id = created.body.data?.id;
+    const updated = await request("PUT", `/api/admin/users/${id}`, {
+      displayName: "After Edit",
+      roleIds: ["role-edit-b"],
+    });
+
+    expect(updated.status).toBe(200);
+    expect(await env.DB.prepare("SELECT display_name FROM users WHERE id = ?").bind(id).first()).toMatchObject({ display_name: "After Edit" });
+    expect(await env.DB.prepare("SELECT role_id FROM user_roles WHERE user_id = ? AND deleted_at IS NULL").bind(id).all()).toMatchObject({ results: [{ role_id: "role-edit-b" }] });
+  });
+
+  it("resets an employee password and rejects resetting the administrator", async () => {
+    const created = await request("POST", "/api/admin/users", {
+      account: "resettable-user",
+      displayName: "Resettable User",
+      password: "original-password-123",
+    });
+    const reset = await request("POST", `/api/admin/users/${created.body.data?.id}/reset-password`, {
+      newPassword: "replacement-password-123",
+    });
+    expect(reset.status).toBe(200);
+
+    const oldLogin = await createApi().request("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account: "resettable-user", password: "original-password-123" }),
+    }, env);
+    const newLogin = await createApi().request("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account: "resettable-user", password: "replacement-password-123" }),
+    }, env);
+    expect(oldLogin.status).toBe(401);
+    expect(newLogin.status).toBe(200);
+
+    const adminReset = await request("POST", "/api/admin/users/admin-workflows/reset-password", {
+      newPassword: "replacement-password-123",
+    });
+    expect(adminReset.status).toBe(400);
   });
 
   it("updates a user status without erasing profile fields", async () => {
