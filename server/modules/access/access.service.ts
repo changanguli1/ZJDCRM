@@ -138,11 +138,11 @@ export async function assertClueAccess(
 
     // Check collaboration permissions
     const collab = await db
-      .prepare("SELECT id, permission FROM clue_collaborators WHERE clue_id = ? AND user_id = ? AND deleted_at IS NULL")
+      .prepare("SELECT id, permission_level FROM clue_collaborators WHERE clue_id = ? AND user_id = ?")
       .bind(clueId, access.userId)
-      .first<{ id: string; permission: string }>();
+      .first<{ id: string; permission_level: string }>();
 
-    if (collab && (collab.permission === "write" || collab.permission === "owner")) return;
+    if (collab?.permission_level === "write") return;
 
     if (mode === "owner") {
       throw { status: 403, code: "FORBIDDEN", message: "不是线索负责人" };

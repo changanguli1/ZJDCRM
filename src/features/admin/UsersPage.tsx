@@ -16,12 +16,21 @@ export default function UsersPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ account: "", displayName: "", password: "", mobile: "", departmentId: "", status: "active", isSuperAdmin: false });
   const [msg, setMsg] = useState("");
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [roleIds, setRoleIds] = useState<string[]>([]);
 
   const fetchUsers = async () => {
     setLoading(true);
     try {
       const data = await api.get<{ items: User[] }>("/admin/users");
       setUsers(data.items);
+      const [departmentData, roleData] = await Promise.all([
+        api.get<any[]>("/admin/departments"),
+        api.get<any[]>("/admin/roles"),
+      ]);
+      setDepartments(departmentData);
+      setRoles(roleData);
     } catch { setMsg("加载失败"); }
     finally { setLoading(false); }
   };
@@ -31,16 +40,17 @@ export default function UsersPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post("/admin/users", form, csrfToken);
+      await api.post("/admin/users", { ...form, roleIds }, csrfToken);
       setShowForm(false);
       setForm({ account: "", displayName: "", password: "", mobile: "", departmentId: "", status: "active", isSuperAdmin: false });
+      setRoleIds([]);
       fetchUsers();
     } catch (err: any) { setMsg(err.message); }
   };
 
   const toggleStatus = async (user: User) => {
     try {
-      await api.put(`/admin/users/${user.id}`, { ...user, status: user.status === "active" ? "disabled" : "active" }, csrfToken);
+      await api.put(`/admin/users/${user.id}`, { status: user.status === "active" ? "disabled" : "active" }, csrfToken);
       fetchUsers();
     } catch (err: any) { setMsg(err.message); }
   };
@@ -57,11 +67,12 @@ export default function UsersPage() {
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">新增员工</div>
           <form onSubmit={handleCreate} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-            <div className="form-field"><label>账号 *</label><input value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })} required /></div>
-            <div className="form-field"><label>姓名 *</label><input value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} required /></div>
-            <div className="form-field"><label>密码</label><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="默认 changeme123" /></div>
-            <div className="form-field"><label>手机</label><input value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} /></div>
-            <div className="form-field"><label>部门ID</label><input value={form.departmentId} onChange={(e) => setForm({ ...form, departmentId: e.target.value })} /></div>
+            <div className="form-field"><label htmlFor="new-user-account">账号 *</label><input id="new-user-account" value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })} required /></div>
+            <div className="form-field"><label htmlFor="new-user-name">姓名 *</label><input id="new-user-name" value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} required /></div>
+            <div className="form-field"><label htmlFor="new-user-password">初始密码 *</label><input id="new-user-password" required minLength={8} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="至少 8 位" /></div>
+            <div className="form-field"><label htmlFor="new-user-mobile">手机</label><input id="new-user-mobile" value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} /></div>
+            <div className="form-field"><label htmlFor="new-user-department">部门</label><select id="new-user-department" value={form.departmentId} onChange={(e) => setForm({ ...form, departmentId: e.target.value })}><option value="">未分配</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></div>
+            <div className="form-field"><label>角色</label>{roles.map((role) => <label key={role.id} style={{ display: "block" }}><input type="checkbox" checked={roleIds.includes(role.id)} onChange={(event) => setRoleIds(event.target.checked ? [...roleIds, role.id] : roleIds.filter((id) => id !== role.id))} /> {role.name}</label>)}</div>
             <div className="form-field" style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
               <label><input type="checkbox" checked={form.isSuperAdmin} onChange={(e) => setForm({ ...form, isSuperAdmin: e.target.checked })} /> 超级管理员</label>
             </div>

@@ -25,6 +25,19 @@ function requireStage(conditions: string[]): string | null {
 }
 
 export function registerClueRoutes(app: Hono): void {
+  app.get("/api/users/assignable", requireAuth, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    if (!hasPermission(access, "clue:assign")) {
+      return c.json({ ok: false, error: { code: "FORBIDDEN", message: "没有分配权限", requestId: c.get("requestId") } }, 403);
+    }
+    const users = await queryAll(
+      c.env.DB,
+      "SELECT id, display_name, department_id FROM users WHERE status = 'active' AND deleted_at IS NULL ORDER BY display_name",
+    );
+    return c.json({ ok: true, data: users });
+  });
+
   // List clues with pagination, filtering, sorting
   app.get("/api/clues", requireAuth, async (c) => {
     const user = c.get("user");
@@ -38,6 +51,7 @@ export function registerClueRoutes(app: Hono): void {
     const stage = c.req.query("stage");
     const source = c.req.query("source");
     const search = c.req.query("search");
+    const unassigned = c.req.query("unassigned") === "true";
     const sortBy = c.req.query("sortBy") || "updated_at";
     const sortOrder = c.req.query("sortOrder") === "asc" ? "ASC" : "DESC";
 
@@ -62,6 +76,9 @@ export function registerClueRoutes(app: Hono): void {
     if (search) {
       conditions.push("(c.title LIKE ? OR co.name LIKE ?)");
       params.push(`%${search}%`, `%${search}%`);
+    }
+    if (unassigned) {
+      conditions.push("c.owner_id IS NULL");
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -260,6 +277,9 @@ export function registerClueRoutes(app: Hono): void {
 
     // Stage change validation
     if (stageCode !== existing.stage_code) {
+      if (!String(body.stageReason || "").trim()) {
+        return c.json({ ok: false, error: { code: "STAGE_REASON_REQUIRED", message: "阶段变更必须填写原因", requestId } }, 400);
+      }
       if (stageCode === "initial_contact") {
         const contactCount = await queryOne<{ cnt: number }>(
           db, "SELECT COUNT(*) as cnt FROM clue_contacts WHERE clue_id = ?", clueId,
@@ -272,8 +292,8 @@ export function registerClueRoutes(app: Hono): void {
         return c.json({ ok: false, error: { code: "CLOSE_LOST_REQUIRE_REASON", message: "标记流失必须填写流失原因", requestId } }, 400);
       }
       if (stageCode === "landed") {
-        if (!body.actualSpaceId || !body.actualArea || !body.actualLandingAt) {
-          return c.json({ ok: false, error: { code: "LANDING_REQUIRE_FIELDS", message: "落地必须填写实际空间、实际面积和落地日期", requestId } }, 400);
+        if (!body.actualSpaceId || !body.actualArea || !body.actualLandingAt || !body.actualFiscalCompletion) {
+          return c.json({ ok: false, error: { code: "LANDING_REQUIRE_FIELDS", message: "落地必须填写实际空间、实际面积、落地日期和财源完成情况", requestId } }, 400);
         }
       }
       if (["signed", "landed"].includes(stageCode) && existing.stage_code === "lost") {
@@ -292,19 +312,35 @@ export function registerClueRoutes(app: Hono): void {
     const updateFields: string[] = [];
     const updateParams: unknown[] = [];
 
-    const updatableFields = [
-      "title", "description", "desired_area", "acquired_at", "expected_landing_at",
-      "bottleneck", "source_code", "source_detail", "internal_referral_flag",
-      "financing_flag", "prior_location", "lost_reason", "fiscal_completion",
-      "expected_output", "expected_tax", "next_followup_at",
-      "actual_space_id", "actual_area", "actual_landing_at", "actual_fiscal_completion",
-      "actual_output", "actual_tax",
+    const updatableFields: Array<[string, string, (value: unknown) => unknown]> = [
+      ["title", "title", (value) => value],
+      ["description", "description", (value) => value || null],
+      ["desiredArea", "desired_area", (value) => value || null],
+      ["acquiredAt", "acquired_at", (value) => value || null],
+      ["expectedLandingAt", "expected_landing_at", (value) => value || null],
+      ["bottleneck", "bottleneck", (value) => value || null],
+      ["sourceCode", "source_code", (value) => value || null],
+      ["sourceDetail", "source_detail", (value) => value || null],
+      ["internalReferralFlag", "internal_referral_flag", (value) => value ? 1 : 0],
+      ["financingFlag", "financing_flag", (value) => value ? 1 : 0],
+      ["priorLocation", "prior_location", (value) => value || null],
+      ["lostReason", "lost_reason", (value) => value || null],
+      ["fiscalCompletion", "fiscal_completion", (value) => value || null],
+      ["expectedOutput", "expected_output", (value) => value || null],
+      ["expectedTax", "expected_tax", (value) => value || null],
+      ["nextFollowupAt", "next_followup_at", (value) => value || null],
+      ["actualSpaceId", "actual_space_id", (value) => value || null],
+      ["actualArea", "actual_area", (value) => value || null],
+      ["actualLandingAt", "actual_landing_at", (value) => value || null],
+      ["actualFiscalCompletion", "actual_fiscal_completion", (value) => value || null],
+      ["actualOutput", "actual_output", (value) => value || null],
+      ["actualTax", "actual_tax", (value) => value || null],
     ];
 
-    for (const field of updatableFields) {
-      if (body[field] !== undefined) {
-        updateFields.push(`${field} = ?`);
-        updateParams.push(body[field]);
+    for (const [bodyKey, column, normalize] of updatableFields) {
+      if (body[bodyKey] !== undefined) {
+        updateFields.push(`${column} = ?`);
+        updateParams.push(normalize(body[bodyKey]));
       }
     }
 

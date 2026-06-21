@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { getSession } from "../features/auth/auth.api";
+import { useAuth } from "../features/auth/auth.store";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -9,6 +10,7 @@ interface AuthGuardProps {
 
 export default function AuthGuard({ children, requireAdmin }: AuthGuardProps) {
   const location = useLocation();
+  const { setSession } = useAuth();
   const [state, setState] = useState<"loading" | "authenticated" | "unauthenticated">("loading");
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -16,6 +18,7 @@ export default function AuthGuard({ children, requireAdmin }: AuthGuardProps) {
     getSession()
       .then((session) => {
         if (session) {
+          setSession(session.user, session.csrfToken);
           setIsAdmin(session.user.isSuperAdmin);
           setState("authenticated");
         } else {
@@ -23,7 +26,7 @@ export default function AuthGuard({ children, requireAdmin }: AuthGuardProps) {
         }
       })
       .catch(() => setState("unauthenticated"));
-  }, [location.pathname]);
+  }, [location.pathname, setSession]);
 
   if (state === "loading") {
     return (

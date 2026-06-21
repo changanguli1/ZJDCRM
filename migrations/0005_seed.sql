@@ -1,5 +1,4 @@
 -- ZJDCRM Production Seed Data
--- Admin password: admin123456 (PBKDF2-SHA-256 hashed below)
 -- Run with: npx wrangler d1 execute zjdcrm-db --remote --file migrations/0005_seed.sql
 
 -- ===== 1. System User (for FK references) =====

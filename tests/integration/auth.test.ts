@@ -206,6 +206,20 @@ describe("GET /api/auth/session", () => {
     expect(body.data!.user.id).toBe("test-user-id");
   });
 
+  it("returns a usable CSRF token after session refresh", async () => {
+    const loginResp = await apiResponse("POST", "/api/auth/login", {
+      body: { account: "testuser", password: "test-password" },
+    });
+    const refreshed = await apiResponse("GET", "/api/auth/session", {
+      cookie: loginResp.headers.get("set-cookie") || "",
+    });
+    const logout = await apiResponse("POST", "/api/auth/logout", {
+      cookie: loginResp.headers.get("set-cookie") || "",
+      csrfToken: refreshed.body.data?.csrfToken,
+    });
+    expect(logout.status).toBe(200);
+  });
+
   it("returns 401 when no session cookie is provided", async () => {
     const { status } = await apiResponse("GET", "/api/auth/session");
     expect(status).toBe(401);

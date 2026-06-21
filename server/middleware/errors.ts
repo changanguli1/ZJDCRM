@@ -23,6 +23,3 @@ export const notFoundHandler: NotFoundHandler = (c) => {
     404,
   );
 };
-
-
-

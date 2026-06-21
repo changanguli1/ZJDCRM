@@ -11,10 +11,40 @@ export default function RolesPage() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ code: "", name: "", description: "" });
   const [showForm, setShowForm] = useState(false);
+  const [permissions, setPermissions] = useState<any[]>([]);
+  const [editing, setEditing] = useState<Role | null>(null);
+  const [permissionIds, setPermissionIds] = useState<string[]>([]);
+  const [dataScope, setDataScope] = useState("self");
 
   const fetch = async () => {
     setLoading(true);
-    try { setRoles(await api.get<Role[]>("/admin/roles")); } catch {} finally { setLoading(false); }
+    try {
+      const [roleData, permissionData] = await Promise.all([
+        api.get<Role[]>("/admin/roles"),
+        api.get<any[]>("/admin/permissions"),
+      ]);
+      setRoles(roleData);
+      setPermissions(permissionData);
+    } catch {} finally { setLoading(false); }
+  };
+
+  const configure = async (role: Role) => {
+    const config = await api.get<any>(`/admin/roles/${role.id}/config`);
+    setEditing(role);
+    setPermissionIds(config.permissionIds);
+    setDataScope(config.dataScope);
+  };
+
+  const saveConfig = async () => {
+    if (!editing) return;
+    await api.put(`/admin/roles/${editing.id}`, {
+      name: editing.name,
+      description: editing.description,
+      permissionIds,
+      dataScope,
+    }, csrfToken);
+    setEditing(null);
+    fetch();
   };
   useEffect(() => { fetch(); }, []);
 
@@ -40,16 +70,32 @@ export default function RolesPage() {
           </form>
         </div>
       )}
+      {editing && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-header">配置角色：{editing.name}</div>
+          <div className="form-field"><label>数据范围</label><select value={dataScope} onChange={(event) => setDataScope(event.target.value)}>
+            <option value="self">本人</option><option value="team">本团队</option><option value="all">全部</option>
+          </select></div>
+          <div className="form-field"><label>权限</label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+              {permissions.map((permission) => <label key={permission.id}><input type="checkbox" checked={permissionIds.includes(permission.id)} onChange={(event) => setPermissionIds(event.target.checked ? [...permissionIds, permission.id] : permissionIds.filter((id) => id !== permission.id))} /> {permission.name}</label>)}
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={saveConfig}>保存配置</button>
+          <button className="btn" onClick={() => setEditing(null)}>取消</button>
+        </div>
+      )}
       {loading ? <div className="loading-screen" style={{ minHeight: 200 }}><div className="spinner" /></div> : (
         <div className="table-wrapper">
           <table>
-            <thead><tr><th>编码</th><th>名称</th><th>描述</th><th>系统</th><th>状态</th></tr></thead>
+            <thead><tr><th>编码</th><th>名称</th><th>描述</th><th>系统</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
               {roles.map((r) => (
                 <tr key={r.id}>
                   <td>{r.code}</td><td>{r.name}</td><td>{r.description || "-"}</td>
                   <td>{r.is_system ? "是" : "否"}</td>
                   <td><span className={`badge ${r.status === "active" ? "badge-success" : "badge-danger"}`}>{r.status}</span></td>
+                  <td><button className="btn btn-sm" onClick={() => configure(r)}>配置权限</button></td>
                 </tr>
               ))}
             </tbody>

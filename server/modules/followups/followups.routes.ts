@@ -7,12 +7,20 @@ import { nowIsoUtc } from "../../shared/time";
 import { requireAuth } from "../../middleware/auth";
 import { requireCsrf } from "../../middleware/csrf";
 import { writeAuditLog } from "../../shared/audit";
+import { assertClueAccess, buildAccessContext } from "../access/access.service";
+
+async function requireClueAccess(c: any, clueId: string, mode: "read" | "write") {
+  const access = await buildAccessContext(c.env.DB, c.get("user").id);
+  await assertClueAccess(c.env.DB, access, clueId, mode);
+}
 
 export function registerFollowupRoutes(app: Hono): void {
   // List followups for a clue
   app.get("/api/clues/:clueId/followups", requireAuth, async (c) => {
     const db = c.env.DB;
     const clueId = c.req.param("clueId");
+    try { await requireClueAccess(c, clueId, "read"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在", requestId: c.get("requestId") } }, 404); }
     const followups = await queryAll(
       db,
       `SELECT f.*, u.display_name as owner_name
@@ -32,6 +40,8 @@ export function registerFollowupRoutes(app: Hono): void {
     const clueId = c.req.param("clueId");
     const body = await c.req.json() as Record<string, unknown>;
     const requestId = c.get("requestId");
+    try { await requireClueAccess(c, clueId, "write"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在或无权编辑", requestId } }, 404); }
 
     if (!body.content) {
       return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "跟进内容不能为空", requestId } }, 400);
@@ -87,6 +97,8 @@ export function registerFollowupRoutes(app: Hono): void {
   app.get("/api/clues/:clueId/timeline", requireAuth, async (c) => {
     const db = c.env.DB;
     const clueId = c.req.param("clueId");
+    try { await requireClueAccess(c, clueId, "read"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在", requestId: c.get("requestId") } }, 404); }
 
     const followups = await queryAll(
       db, `SELECT 'followup' as type, id, followup_at as event_at, content as description, owner_id FROM followups WHERE clue_id = ? AND deleted_at IS NULL`, clueId,

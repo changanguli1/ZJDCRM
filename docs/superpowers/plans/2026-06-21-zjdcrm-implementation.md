@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build, test, publish, and deploy the PRD-complete V1.0 ZJDCRM application at `zjdcrm.custard.top`.
+**Goal:** Build, test, publish, and deploy the PRD-complete V1.0 ZJDCRM application at `cfzzs.custard.top`.
 
 **Architecture:** A React and TypeScript single-page application is served by Cloudflare Pages. A Hono application running in Pages Functions exposes same-origin APIs, with D1 repositories for relational data, R2 for private attachments and exports, and a scheduled Worker for reminders and file expiry. Authentication, RBAC, data scope, audit logging, and business validation are shared service boundaries rather than controller-specific logic.
 
@@ -1182,13 +1182,13 @@ npx wrangler pages deploy dist --project-name zjdcrm --branch main --commit-dirt
 
 Configure the Pages project to use the GitHub repository and main branch for future continuous deployment. Deploy the scheduled Worker and its D1/R2 bindings.
 
-- [ ] **Step 4: Bind `zjdcrm.custard.top`**
+- [ ] **Step 4: Bind `cfzzs.custard.top`**
 
 Add the custom domain to the Pages project through Cloudflare Pages domain management. Confirm DNS is proxied and the certificate is active.
 
 - [ ] **Step 5: Run production verification**
 
-Run remote Playwright against `https://zjdcrm.custard.top` and verify:
+Run remote Playwright against `https://cfzzs.custard.top` and verify:
 
 ```text
 HTTPS and security headers.
@@ -1228,7 +1228,7 @@ git push
 - [ ] D1 migrations and default dictionaries are applied remotely.
 - [ ] R2 attachments and exports are private.
 - [ ] `admin` exists and the initial password is not stored in Git.
-- [ ] `https://zjdcrm.custard.top` resolves with a valid certificate.
+- [ ] `https://cfzzs.custard.top` resolves with a valid certificate.
 - [ ] `/admin` rejects ordinary users.
 - [ ] All PRD chapter 16 acceptance items have automated or documented production evidence.
 - [ ] Backup and recovery commands are documented and tested on a non-production export.

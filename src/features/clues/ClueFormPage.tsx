@@ -22,6 +22,10 @@ interface FormData {
   fiscalCompletion: string;
   expectedOutput: string;
   expectedTax: string;
+  actualSpaceId: string;
+  actualArea: string;
+  actualLandingAt: string;
+  actualFiscalCompletion: string;
   stageReason: string;
   version?: number;
 }
@@ -32,7 +36,8 @@ const defaultForm: FormData = {
   expectedLandingAt: "", stageCode: "new", bottleneck: "", sourceCode: "",
   internalReferralFlag: false, financingFlag: false,
   priorLocation: "", lostReason: "", fiscalCompletion: "",
-  expectedOutput: "", expectedTax: "", stageReason: "",
+  expectedOutput: "", expectedTax: "", actualSpaceId: "", actualArea: "",
+  actualLandingAt: "", actualFiscalCompletion: "", stageReason: "",
 };
 
 export default function ClueFormPage() {
@@ -44,6 +49,13 @@ export default function ClueFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [spaces, setSpaces] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.get<any>("/spaces", { pageSize: "100" })
+      .then((data) => setSpaces(data.items || []))
+      .catch(() => setSpaces([]));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -66,6 +78,10 @@ export default function ClueFormPage() {
         fiscalCompletion: data.fiscal_completion || "",
         expectedOutput: data.expected_output?.toString() || "",
         expectedTax: data.expected_tax?.toString() || "",
+        actualSpaceId: data.actual_space_id || "",
+        actualArea: data.actual_area?.toString() || "",
+        actualLandingAt: data.actual_landing_at?.split("T")[0] || "",
+        actualFiscalCompletion: data.actual_fiscal_completion || "",
         stageReason: "",
         version: data.version,
       });
@@ -105,8 +121,8 @@ export default function ClueFormPage() {
         <div className="card">
           <div className="card-header">基本信息</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="form-field"><label>线索名称 *</label><input value={form.title} onChange={(e) => set("title", e.target.value)} required /></div>
-            <div className="form-field"><label>企业名称 *</label><input value={form.companyName} onChange={(e) => set("companyName", e.target.value)} required /></div>
+            <div className="form-field"><label htmlFor="clue-title">线索名称 *</label><input id="clue-title" value={form.title} onChange={(e) => set("title", e.target.value)} required /></div>
+            <div className="form-field"><label htmlFor="company-name">企业名称 *</label><input id="company-name" value={form.companyName} onChange={(e) => set("companyName", e.target.value)} required /></div>
             <div className="form-field"><label>主营业务</label><input value={form.mainBusiness} onChange={(e) => set("mainBusiness", e.target.value)} /></div>
             <div className="form-field">
               <label>行业</label>
@@ -188,8 +204,10 @@ export default function ClueFormPage() {
           <div className="card">
             <div className="card-header">落地信息</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div className="form-field"><label>实际面积 *</label><input type="number" value={form.fiscalCompletion} onChange={(e) => set("fiscalCompletion", e.target.value)} /></div>
-              <div className="form-field"><label>财源完成情况</label><input value={form.fiscalCompletion} onChange={(e) => set("fiscalCompletion", e.target.value)} /></div>
+              <div className="form-field"><label>实际空间 *</label><select required value={form.actualSpaceId} onChange={(e) => set("actualSpaceId", e.target.value)}><option value="">请选择</option>{spaces.map((space) => <option key={space.id} value={space.id}>{space.park_name} / {space.building_name} / {space.name}</option>)}</select></div>
+              <div className="form-field"><label>实际面积 *</label><input required type="number" value={form.actualArea} onChange={(e) => set("actualArea", e.target.value)} /></div>
+              <div className="form-field"><label>落地日期 *</label><input required type="date" value={form.actualLandingAt} onChange={(e) => set("actualLandingAt", e.target.value)} /></div>
+              <div className="form-field"><label>财源完成情况 *</label><input required value={form.actualFiscalCompletion} onChange={(e) => set("actualFiscalCompletion", e.target.value)} /></div>
             </div>
           </div>
         )}

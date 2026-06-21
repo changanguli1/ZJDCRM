@@ -79,7 +79,7 @@ export async function login(
 
   // Create session
   const sessionToken = createSecureToken();
-  const csrfToken = createSecureToken();
+  const csrfToken = await hashSessionToken(`${sessionToken}:csrf`);
   const sessionHash = await hashSessionToken(sessionToken);
   const csrfHash = await hashSessionToken(csrfToken);
   const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000).toISOString();
@@ -113,6 +113,11 @@ export async function getSession(
 
   const user = await repo.findById(db, session.user_id);
   if (!user || user.status !== "active") return null;
+  const csrfToken = await hashSessionToken(`${sessionToken}:csrf`);
+  const csrfHash = await hashSessionToken(csrfToken);
+  await db.prepare(
+    "UPDATE sessions SET csrf_hash = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+  ).bind(csrfHash, new Date().toISOString(), user.id, session.id).run();
 
   return {
     user: {
@@ -122,7 +127,7 @@ export async function getSession(
       isSuperAdmin: user.is_super_admin === 1,
       departmentId: user.department_id,
     },
-    csrfToken: session.csrf_hash, // Store so we can validate
+    csrfToken,
   };
 }
 

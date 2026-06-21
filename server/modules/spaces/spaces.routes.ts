@@ -6,6 +6,7 @@ import { createId } from "../../shared/ids";
 import { nowIsoUtc } from "../../shared/time";
 import { requireAuth } from "../../middleware/auth";
 import { requireCsrf } from "../../middleware/csrf";
+import { assertClueAccess, buildAccessContext, hasPermission } from "../access/access.service";
 
 export function registerSpaceRoutes(app: Hono): void {
   // List spaces with filtering
@@ -71,6 +72,10 @@ export function registerSpaceRoutes(app: Hono): void {
     const body = await c.req.json() as Record<string, unknown>;
     const now = nowIsoUtc();
     const id = createId();
+    const access = await buildAccessContext(db, user.id);
+    if (!user.isSuperAdmin && !hasPermission(access, "data:import")) {
+      return c.json({ ok: false, error: { code: "FORBIDDEN", message: "没有空间维护权限", requestId: c.get("requestId") } }, 403);
+    }
 
     await execute(
       db,
@@ -90,6 +95,10 @@ export function registerSpaceRoutes(app: Hono): void {
     const spaceId = c.req.param("id");
     const body = await c.req.json() as Record<string, unknown>;
     const now = nowIsoUtc();
+    const access = await buildAccessContext(db, user.id);
+    if (!user.isSuperAdmin && !hasPermission(access, "data:import")) {
+      return c.json({ ok: false, error: { code: "FORBIDDEN", message: "没有空间维护权限", requestId: c.get("requestId") } }, 403);
+    }
 
     await execute(
       db,
@@ -124,6 +133,9 @@ export function registerSpaceRoutes(app: Hono): void {
     const clueId = c.req.param("clueId");
     const body = await c.req.json() as { spaceId: string; matchRank?: number; matchReason?: string };
     const now = nowIsoUtc();
+    const access = await buildAccessContext(db, user.id);
+    try { await assertClueAccess(db, access, clueId, "write"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在或无权编辑", requestId: c.get("requestId") } }, 404); }
 
     await execute(
       db,

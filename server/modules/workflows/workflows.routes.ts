@@ -1,0 +1,340 @@
+// @ts-nocheck
+/* eslint-disable */
+import { Hono } from "hono";
+import { requireAuth } from "../../middleware/auth";
+import { requireCsrf } from "../../middleware/csrf";
+import { writeAuditLog } from "../../shared/audit";
+import { execute, queryAll, queryOne } from "../../shared/db";
+import { createId } from "../../shared/ids";
+import { normalizeCompanyName } from "../../shared/normalize-company";
+import { nowIsoUtc } from "../../shared/time";
+import {
+  buildAccessContext,
+  buildClueScopeFilter,
+  hasPermission,
+} from "../access/access.service";
+
+function error(c: any, status: number, code: string, message: string) {
+  return c.json({
+    ok: false,
+    error: { code, message, requestId: c.get("requestId") },
+  }, status);
+}
+
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function registerWorkflowRoutes(app: Hono): void {
+  app.get("/api/reports", requireAuth, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    const filter = buildClueScopeFilter(access);
+    const scopeSql = filter.sql ? `AND ${filter.sql}` : "";
+    const params = filter.params;
+
+    const [stageDistribution, sourceDistribution, ownerPerformance, spaceStatus] = await Promise.all([
+      queryAll(c.env.DB,
+        `SELECT c.stage_code, COUNT(*) AS total
+         FROM clues c WHERE c.deleted_at IS NULL ${scopeSql}
+         GROUP BY c.stage_code ORDER BY total DESC`, ...params),
+      queryAll(c.env.DB,
+        `SELECT COALESCE(c.source_code, 'unknown') AS source_code, COUNT(*) AS total
+         FROM clues c WHERE c.deleted_at IS NULL ${scopeSql}
+         GROUP BY COALESCE(c.source_code, 'unknown') ORDER BY total DESC`, ...params),
+      queryAll(c.env.DB,
+        `SELECT COALESCE(u.display_name, '未分配') AS owner_name, COUNT(*) AS clue_count
+         FROM clues c LEFT JOIN users u ON c.owner_id = u.id
+         WHERE c.deleted_at IS NULL ${scopeSql}
+         GROUP BY c.owner_id, u.display_name ORDER BY clue_count DESC`, ...params),
+      queryAll(c.env.DB,
+        `SELECT status_code, COUNT(*) AS total, COALESCE(SUM(area), 0) AS area
+         FROM spaces WHERE deleted_at IS NULL GROUP BY status_code ORDER BY total DESC`),
+    ]);
+
+    return c.json({ ok: true, data: { stageDistribution, sourceDistribution, ownerPerformance, spaceStatus } });
+  });
+
+  app.get("/api/imports", requireAuth, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    const canManage = hasPermission(access, "system:admin:access") || user.isSuperAdmin;
+    const where = canManage ? "" : "WHERE requested_by = ?";
+    const params = canManage ? [] : [user.id];
+    const items = await queryAll(
+      c.env.DB,
+      `SELECT * FROM import_jobs ${where} ORDER BY created_at DESC LIMIT 100`,
+      ...params,
+    );
+    return c.json({ ok: true, data: { items } });
+  });
+
+  app.post("/api/imports", requireAuth, requireCsrf, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    if (!user.isSuperAdmin && !hasPermission(access, "data:import")) {
+      return error(c, 403, "FORBIDDEN", "没有导入权限");
+    }
+
+    const body = await c.req.json();
+    const rows = Array.isArray(body.rows) ? body.rows.slice(0, 1000) : [];
+    if (body.jobType !== "clues" || rows.length === 0) {
+      return error(c, 400, "VALIDATION_ERROR", "请选择招商线索模板并提供数据");
+    }
+
+    const now = nowIsoUtc();
+    const jobId = createId();
+    await execute(
+      c.env.DB,
+      `INSERT INTO import_jobs
+        (id, requested_by, job_type, source_file_name, template_version, status,
+         total_rows, success_rows, failed_rows, started_at, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, 'clues', ?, '1.0', 'running', ?, 0, 0, ?, ?, ?, ?, ?)`,
+      jobId, user.id, body.sourceFileName || "import.csv", rows.length,
+      now, now, user.id, now, user.id,
+    );
+
+    let successRows = 0;
+    let failedRows = 0;
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index] || {};
+      const title = String(row.title || "").trim();
+      const companyName = String(row.companyName || "").trim();
+      let rowStatus = "success";
+      let rowError: string | null = null;
+
+      try {
+        if (!title || !companyName) throw new Error("线索名称和企业名称为必填项");
+        const normalizedName = normalizeCompanyName(companyName);
+        let company = await queryOne<{ id: string }>(
+          c.env.DB,
+          "SELECT id FROM companies WHERE normalized_name = ? AND deleted_at IS NULL",
+          normalizedName,
+        );
+        if (!company) {
+          company = { id: createId() };
+          await execute(
+            c.env.DB,
+            `INSERT INTO companies
+              (id, name, normalized_name, main_business, industry_code, status,
+               created_at, created_by, updated_at, updated_by)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+            company.id, companyName, normalizedName, row.mainBusiness || "",
+            row.industryCode || "other", now, user.id, now, user.id,
+          );
+        }
+
+        await execute(
+          c.env.DB,
+          `INSERT INTO clues
+            (id, company_id, title, desired_area, acquired_at, expected_landing_at,
+             stage_code, source_code, owner_id, department_id,
+             created_at, created_by, updated_at, updated_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          createId(), company.id, title, row.desiredArea || null,
+          row.acquiredAt || now, row.expectedLandingAt || null,
+          row.stageCode || "new", row.sourceCode || null, row.ownerId || null,
+          row.departmentId || user.departmentId || null, now, user.id, now, user.id,
+        );
+        successRows++;
+      } catch (cause) {
+        rowStatus = "failed";
+        rowError = cause instanceof Error ? cause.message : "导入失败";
+        failedRows++;
+      }
+
+      await execute(
+        c.env.DB,
+        `INSERT INTO import_job_rows
+          (id, import_job_id, row_number, status, error_message, source_payload_json,
+           created_at, created_by, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        createId(), jobId, index + 1, rowStatus, rowError, JSON.stringify(row),
+        now, user.id, now, user.id,
+      );
+    }
+
+    await execute(
+      c.env.DB,
+      `UPDATE import_jobs
+       SET status = 'completed', success_rows = ?, failed_rows = ?, finished_at = ?,
+           updated_at = ?, updated_by = ?
+       WHERE id = ?`,
+      successRows, failedRows, now, now, user.id, jobId,
+    );
+    await writeAuditLog(c.env.DB, {
+      actorId: user.id,
+      action: "import:complete",
+      entityType: "import_job",
+      entityId: jobId,
+      ipAddress: c.req.header("cf-connecting-ip") || null,
+      userAgent: c.req.header("user-agent") || null,
+      requestId: c.get("requestId"),
+      summary: { totalRows: rows.length, successRows, failedRows },
+    });
+
+    return c.json({
+      ok: true,
+      data: { id: jobId, totalRows: rows.length, successRows, failedRows },
+    }, 201);
+  });
+
+  app.get("/api/export-requests", requireAuth, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    const canApprove = user.isSuperAdmin || hasPermission(access, "export:approve");
+    const where = canApprove ? "" : "WHERE er.requested_by = ?";
+    const params = canApprove ? [] : [user.id];
+    const requests = await queryAll(
+      c.env.DB,
+      `SELECT er.*, u.display_name AS requester_name, ef.file_name, ef.expires_at
+       FROM export_requests er
+       LEFT JOIN users u ON er.requested_by = u.id
+       LEFT JOIN export_files ef ON ef.export_request_id = er.id
+       ${where}
+       ORDER BY er.created_at DESC`,
+      ...params,
+    );
+    return c.json({ ok: true, data: requests });
+  });
+
+  app.post("/api/export-requests", requireAuth, requireCsrf, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    if (!user.isSuperAdmin && !hasPermission(access, "data:export")) {
+      return error(c, 403, "FORBIDDEN", "没有导出申请权限");
+    }
+    const body = await c.req.json();
+    const reason = String(body.reason || "").trim();
+    if (!reason) return error(c, 400, "VALIDATION_ERROR", "请填写导出原因");
+    const now = nowIsoUtc();
+    const id = createId();
+    await execute(
+      c.env.DB,
+      `INSERT INTO export_requests
+        (id, requested_by, reason, scope_json, status, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+      id, user.id, reason, JSON.stringify(body.scope || { entity: "clues" }),
+      now, user.id, now, user.id,
+    );
+    return c.json({ ok: true, data: { id, status: "pending" } }, 201);
+  });
+
+  app.post("/api/export-requests/:id/approve", requireAuth, requireCsrf, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    if (!user.isSuperAdmin && !hasPermission(access, "export:approve")) {
+      return error(c, 403, "FORBIDDEN", "没有导出审批权限");
+    }
+    const request = await queryOne<any>(
+      c.env.DB,
+      "SELECT * FROM export_requests WHERE id = ? AND deleted_at IS NULL",
+      c.req.param("id"),
+    );
+    if (!request) return error(c, 404, "NOT_FOUND", "导出申请不存在");
+    if (request.status !== "pending") return error(c, 409, "INVALID_STATUS", "该申请已处理");
+
+    const requesterAccess = await buildAccessContext(c.env.DB, request.requested_by);
+    const filter = buildClueScopeFilter(requesterAccess);
+    const where = filter.sql ? `AND ${filter.sql}` : "";
+    const rows = await queryAll<any>(
+      c.env.DB,
+      `SELECT c.title, co.name AS company_name, c.stage_code, c.source_code,
+              c.desired_area, c.expected_landing_at, c.expected_output, c.expected_tax
+       FROM clues c JOIN companies co ON c.company_id = co.id
+       WHERE c.deleted_at IS NULL ${where}
+       ORDER BY c.updated_at DESC`,
+      ...filter.params,
+    );
+    const header = ["线索名称", "企业名称", "阶段", "渠道", "需求面积", "预计落位", "预计产值", "预计税收"];
+    const csv = "\uFEFF" + [
+      header.map(csvCell).join(","),
+      ...rows.map((row) => [
+        row.title, row.company_name, row.stage_code, row.source_code,
+        row.desired_area, row.expected_landing_at, row.expected_output, row.expected_tax,
+      ].map(csvCell).join(",")),
+    ].join("\r\n");
+    const now = nowIsoUtc();
+    const fileId = createId();
+    const storageKey = `exports/${request.id}/${fileId}.csv`;
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await c.env.FILES.put(storageKey, csv, {
+      httpMetadata: { contentType: "text/csv; charset=utf-8" },
+    });
+    await execute(
+      c.env.DB,
+      `INSERT INTO export_files
+        (id, export_request_id, storage_key, file_name, content_type, file_size,
+         file_hash, expires_at, status, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, 'text/csv; charset=utf-8', ?, ?, ?, 'ready', ?, ?, ?, ?)`,
+      fileId, request.id, storageKey, `zjdcrm-clues-${now.slice(0, 10)}.csv`,
+      new TextEncoder().encode(csv).byteLength, await sha256Hex(csv), expiresAt,
+      now, user.id, now, user.id,
+    );
+    await execute(
+      c.env.DB,
+      `UPDATE export_requests SET status = 'ready', approved_by = ?, approved_at = ?,
+       updated_at = ?, updated_by = ? WHERE id = ?`,
+      user.id, now, now, user.id, request.id,
+    );
+    return c.json({ ok: true, data: { status: "ready", expiresAt } });
+  });
+
+  app.post("/api/export-requests/:id/reject", requireAuth, requireCsrf, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    if (!user.isSuperAdmin && !hasPermission(access, "export:approve")) {
+      return error(c, 403, "FORBIDDEN", "没有导出审批权限");
+    }
+    const body = await c.req.json();
+    const reason = String(body.reason || "").trim();
+    if (!reason) return error(c, 400, "VALIDATION_ERROR", "请填写驳回原因");
+    const now = nowIsoUtc();
+    await execute(
+      c.env.DB,
+      `UPDATE export_requests SET status = 'rejected', rejected_by = ?, rejected_at = ?,
+       rejection_reason = ?, updated_at = ?, updated_by = ?
+       WHERE id = ? AND status = 'pending'`,
+      user.id, now, reason, now, user.id, c.req.param("id"),
+    );
+    return c.json({ ok: true, data: { status: "rejected" } });
+  });
+
+  app.get("/api/export-requests/:id/download", requireAuth, async (c) => {
+    const user = c.get("user");
+    const access = await buildAccessContext(c.env.DB, user.id);
+    const file = await queryOne<any>(
+      c.env.DB,
+      `SELECT ef.*, er.requested_by FROM export_files ef
+       JOIN export_requests er ON er.id = ef.export_request_id
+       WHERE ef.export_request_id = ? AND ef.status IN ('ready', 'downloaded')`,
+      c.req.param("id"),
+    );
+    if (!file) return error(c, 404, "NOT_FOUND", "导出文件不存在");
+    if (file.requested_by !== user.id && !user.isSuperAdmin && !hasPermission(access, "export:approve")) {
+      return error(c, 403, "FORBIDDEN", "无权下载该文件");
+    }
+    if (file.expires_at <= nowIsoUtc()) return error(c, 410, "EXPORT_EXPIRED", "下载链接已过期");
+    const object = await c.env.FILES.get(file.storage_key);
+    if (!object) return error(c, 404, "NOT_FOUND", "导出文件不存在");
+    const now = nowIsoUtc();
+    await execute(
+      c.env.DB,
+      `UPDATE export_files SET status = 'downloaded', downloaded_at = ?,
+       downloaded_by = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
+      now, user.id, now, user.id, file.id,
+    );
+    return new Response(object.body, {
+      headers: {
+        "content-type": file.content_type,
+        "content-disposition": `attachment; filename="${file.file_name}"`,
+      },
+    });
+  });
+}

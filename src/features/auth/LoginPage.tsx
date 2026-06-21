@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login } from "./auth.api";
 import { useAuth } from "./auth.store";
+import { useSiteSettings } from "../../lib/site-settings";
 
 type LoginError = { message: string };
 
@@ -12,6 +13,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const settings = useSiteSettings();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,9 +38,11 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-header">
-          <h1>ZJDCRM</h1>
-          <p>产业园区招商线索管理系统</p>
+          {settings.logo_url && <img src={settings.logo_url} alt="" style={{ maxHeight: 56, maxWidth: 180 }} />}
+          <h1>{settings.site_name || "ZJDCRM"}</h1>
+          <p>{settings.login_text || "产业园区招商线索管理系统"}</p>
         </div>
+        {settings.announcement && <div className="card" style={{ marginBottom: 16 }}>{settings.announcement}</div>}
         <form onSubmit={handleSubmit} className="login-form">
           {error && (
             <div className="form-error" role="alert">

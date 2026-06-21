@@ -6,7 +6,7 @@
 
 你现在负责完成一个真实项目：`ZJDCRM`，产业园区招商线索管理系统。
 
-你的目标不是写 Demo，而是基于现有仓库把 PRD V1.0 实现完整、测试完整，并持续 push 到 GitHub `main`。Cloudflare Pages 已连接 `main`，每次 push 会自动部署到 `https://zjdcrm.custard.top`。
+你的目标不是写 Demo，而是基于现有仓库把 PRD V1.0 实现完整、测试完整，并持续 push 到 GitHub `main`。Cloudflare Pages 已连接 `main`，每次 push 会自动部署到 `https://cfzzs.custard.top`。
 
 ## 一、工作目录和权威文档
 
@@ -298,7 +298,7 @@ POST /api/auth/change-password
 入口：
 
 ```text
-https://zjdcrm.custard.top/admin
+https://cfzzs.custard.top/admin
 ```
 
 普通用户菜单不显示，但安全不能依赖隐藏路径。只有 `system:admin:access` 可进入。
@@ -462,7 +462,7 @@ npm run e2e
 - 本地完整验证通过。
 - GitHub Actions 通过。
 - Cloudflare 自动部署成功。
-- `https://zjdcrm.custard.top` HTTPS 正常。
+- `https://cfzzs.custard.top` HTTPS 正常。
 - `/admin` 正常且普通用户不可访问。
 - D1 migrations 已远程应用。
 - R2 附件和导出保持私有。

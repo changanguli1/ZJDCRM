@@ -9,6 +9,7 @@ import { buildAccessContext, hasPermission } from "../access/access.service";
 import { writeAuditLog } from "../../shared/audit";
 import { requireAuth } from "../../middleware/auth";
 import { requireCsrf } from "../../middleware/csrf";
+import { normalizeCompanyName } from "../../shared/normalize-company";
 
 const ADMIN_PERM = "system:admin:access";
 
@@ -27,6 +28,21 @@ function adminGuard() {
 }
 
 export function registerAdminRoutes(app: Hono): void {
+  app.get("/api/settings/public", async (c) => {
+    const allowedKeys = ["site_name", "login_text", "announcement", "logo_url"];
+    const placeholders = allowedKeys.map(() => "?").join(", ");
+    const rows = await queryAll<{ setting_key: string; setting_value: string }>(
+      c.env.DB,
+      `SELECT setting_key, setting_value FROM system_settings
+       WHERE setting_key IN (${placeholders}) AND status = 'active' AND deleted_at IS NULL`,
+      ...allowedKeys,
+    );
+    return c.json({
+      ok: true,
+      data: Object.fromEntries(rows.map((row) => [row.setting_key, row.setting_value])),
+    });
+  });
+
   // ==================== USERS ====================
   app.get("/api/admin/users", requireAuth, adminGuard(), async (c) => {
     const db = c.env.DB;
@@ -48,26 +64,48 @@ export function registerAdminRoutes(app: Hono): void {
   app.post("/api/admin/users", requireAuth, requireCsrf, adminGuard(), async (c) => {
     const user = c.get("user");
     const db = c.env.DB;
-    const body = await c.req.json() as Record<string, string>;
+    const body = await c.req.json() as Record<string, any>;
+    const account = String(body.account || "").trim();
+    const displayName = String(body.displayName || "").trim();
+    const password = String(body.password || "");
+    if (!account || !displayName || password.length < 8) {
+      return c.json({
+        ok: false,
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "账号、姓名和至少 8 位的初始密码为必填项",
+          requestId: c.get("requestId"),
+        },
+      }, 400);
+    }
     const now = nowIsoUtc();
     const id = createId();
-    const { hash, salt, iterations } = await hashPassword(body.password || "changeme123");
+    const { hash, salt, iterations } = await hashPassword(password);
 
     await execute(
       db,
       `INSERT INTO users (id, account, normalized_account, display_name, password_hash, password_salt, password_iterations, mobile, email, department_id, status, is_super_admin, created_at, created_by, updated_at, updated_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id, body.account, body.account.toLowerCase().trim(), body.displayName,
+      id, account, account.toLowerCase(), displayName,
       hash, salt, iterations, body.mobile || null, body.email || null,
       body.departmentId || null, body.status || "active", body.isSuperAdmin ? 1 : 0,
       now, user.id, now, user.id,
     );
+    const roleIds = Array.isArray(body.roleIds) ? body.roleIds.filter(Boolean) : [];
+    if (roleIds.length > 0) {
+      await batch(db, roleIds.map((roleId: string) => ({
+        sql: `INSERT INTO user_roles
+          (id, user_id, role_id, granted_by, granted_at, created_at, created_by, updated_at, updated_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        values: [createId(), id, roleId, user.id, now, now, user.id, now, user.id],
+      })));
+    }
 
     const ipAddress = c.req.header("cf-connecting-ip") || null;
     const userAgent = c.req.header("user-agent") || null;
     await writeAuditLog(db, {
       actorId: user.id, action: "admin:user:create", entityType: "user", entityId: id,
-      ipAddress, userAgent, requestId: c.get("requestId"), summary: { account: body.account },
+      ipAddress, userAgent, requestId: c.get("requestId"), summary: { account, roleIds },
     });
     return c.json({ ok: true, data: { id } }, 201);
   });
@@ -78,14 +116,60 @@ export function registerAdminRoutes(app: Hono): void {
     const userId = c.req.param("id");
     const body = await c.req.json() as Record<string, unknown>;
     const now = nowIsoUtc();
-
-    await execute(
+    const existing = await queryOne<{ is_super_admin: number; status: string }>(
       db,
-      "UPDATE users SET display_name = ?, mobile = ?, email = ?, department_id = ?, status = ?, is_super_admin = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL",
-      body.displayName, body.mobile || null, body.email || null,
-      body.departmentId || null, body.status || "active", body.isSuperAdmin ? 1 : 0,
-      now, user.id, userId,
+      "SELECT is_super_admin, status FROM users WHERE id = ? AND deleted_at IS NULL",
+      userId,
     );
+    if (!existing) {
+      return c.json({ ok: false, error: { code: "NOT_FOUND", message: "用户不存在", requestId: c.get("requestId") } }, 404);
+    }
+    const nextStatus = body.status === undefined ? existing.status : String(body.status);
+    const nextSuper = body.isSuperAdmin === undefined ? existing.is_super_admin : (body.isSuperAdmin ? 1 : 0);
+    if (existing.is_super_admin === 1 && (nextStatus !== "active" || nextSuper === 0)) {
+      const otherAdmins = await queryOne<{ total: number }>(
+        db,
+        "SELECT COUNT(*) AS total FROM users WHERE is_super_admin = 1 AND status = 'active' AND deleted_at IS NULL AND id <> ?",
+        userId,
+      );
+      if (!otherAdmins?.total) {
+        return c.json({
+          ok: false,
+          error: {
+            code: "LAST_SUPER_ADMIN",
+            message: "不能禁用或降级最后一个有效超级管理员",
+            requestId: c.get("requestId"),
+          },
+        }, 409);
+      }
+    }
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    const mappings: Array<[string, string, (value: unknown) => unknown]> = [
+      ["displayName", "display_name", (value) => String(value).trim()],
+      ["mobile", "mobile", (value) => value || null],
+      ["email", "email", (value) => value || null],
+      ["departmentId", "department_id", (value) => value || null],
+      ["status", "status", (value) => value],
+      ["isSuperAdmin", "is_super_admin", (value) => value ? 1 : 0],
+    ];
+    for (const [bodyKey, column, normalize] of mappings) {
+      if (body[bodyKey] !== undefined) {
+        fields.push(`${column} = ?`);
+        values.push(normalize(body[bodyKey]));
+      }
+    }
+    fields.push("updated_at = ?", "updated_by = ?");
+    values.push(now, user.id, userId);
+    await execute(db, `UPDATE users SET ${fields.join(", ")} WHERE id = ? AND deleted_at IS NULL`, ...values);
+    if (nextStatus !== "active") {
+      await execute(
+        db,
+        "UPDATE sessions SET revoked_at = ?, revoked_by = ?, updated_at = ?, updated_by = ? WHERE user_id = ? AND revoked_at IS NULL",
+        now, user.id, now, user.id, userId,
+      );
+    }
     return c.json({ ok: true, data: null });
   });
 
@@ -131,6 +215,74 @@ export function registerAdminRoutes(app: Hono): void {
     return c.json({ ok: true, data: { id } }, 201);
   });
 
+  app.get("/api/admin/permissions", requireAuth, adminGuard(), async (c) => {
+    const permissions = await queryAll(
+      c.env.DB,
+      "SELECT id, code, name, permission_type FROM permissions WHERE deleted_at IS NULL AND status = 'active' ORDER BY sort_order, name",
+    );
+    return c.json({ ok: true, data: permissions });
+  });
+
+  app.get("/api/admin/roles/:id/config", requireAuth, adminGuard(), async (c) => {
+    const permissionRows = await queryAll<{ permission_id: string }>(
+      c.env.DB,
+      "SELECT permission_id FROM role_permissions WHERE role_id = ? AND deleted_at IS NULL",
+      c.req.param("id"),
+    );
+    const scope = await queryOne<{ scope_type: string }>(
+      c.env.DB,
+      "SELECT scope_type FROM role_data_scopes WHERE role_id = ? ORDER BY created_at LIMIT 1",
+      c.req.param("id"),
+    );
+    return c.json({
+      ok: true,
+      data: {
+        permissionIds: permissionRows.map((row) => row.permission_id),
+        dataScope: scope?.scope_type || "self",
+      },
+    });
+  });
+
+  app.put("/api/admin/roles/:id", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const roleId = c.req.param("id");
+    const body = await c.req.json() as Record<string, any>;
+    const now = nowIsoUtc();
+    const role = await queryOne<{ id: string }>(
+      c.env.DB,
+      "SELECT id FROM roles WHERE id = ? AND deleted_at IS NULL",
+      roleId,
+    );
+    if (!role) {
+      return c.json({ ok: false, error: { code: "NOT_FOUND", message: "角色不存在", requestId: c.get("requestId") } }, 404);
+    }
+    await execute(
+      c.env.DB,
+      `UPDATE roles SET name = COALESCE(?, name), description = COALESCE(?, description),
+       status = COALESCE(?, status), updated_at = ?, updated_by = ? WHERE id = ?`,
+      body.name || null, body.description ?? null, body.status || null, now, user.id, roleId,
+    );
+    await execute(c.env.DB, "DELETE FROM role_permissions WHERE role_id = ?", roleId);
+    const permissionIds = Array.isArray(body.permissionIds) ? body.permissionIds.filter(Boolean) : [];
+    if (permissionIds.length) {
+      await batch(c.env.DB, permissionIds.map((permissionId: string) => ({
+        sql: `INSERT INTO role_permissions
+          (id, role_id, permission_id, granted_by, granted_at, created_at, created_by, updated_at, updated_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        values: [createId(), roleId, permissionId, user.id, now, now, user.id, now, user.id],
+      })));
+    }
+    await execute(c.env.DB, "DELETE FROM role_data_scopes WHERE role_id = ?", roleId);
+    await execute(
+      c.env.DB,
+      `INSERT INTO role_data_scopes
+        (id, role_id, scope_type, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      createId(), roleId, body.dataScope || "self", now, user.id, now, user.id,
+    );
+    return c.json({ ok: true, data: null });
+  });
+
   // ==================== DICTIONARIES ====================
   app.get("/api/admin/dictionaries", requireAuth, adminGuard(), async (c) => {
     const db = c.env.DB;
@@ -149,6 +301,93 @@ export function registerAdminRoutes(app: Hono): void {
       db,
       "INSERT INTO dictionaries (id, code, name, category, description, status, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       id, body.code, body.name, body.category || null, body.description || null, body.status || "active", now, user.id, now, user.id,
+    );
+    return c.json({ ok: true, data: { id } }, 201);
+  });
+
+  app.post("/api/admin/dictionaries/:id/items", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json() as Record<string, any>;
+    if (!String(body.code || "").trim() || !String(body.name || "").trim()) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "编码和名称为必填项", requestId: c.get("requestId") } }, 400);
+    }
+    const now = nowIsoUtc();
+    const id = createId();
+    await execute(
+      c.env.DB,
+      `INSERT INTO dictionary_items
+        (id, dictionary_id, code, name, value, sort_order, status, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, c.req.param("id"), String(body.code).trim(), String(body.name).trim(),
+      body.value || body.code, Number(body.sortOrder || 0), body.status || "active",
+      now, user.id, now, user.id,
+    );
+    return c.json({ ok: true, data: { id } }, 201);
+  });
+
+  app.get("/api/admin/space-hierarchy", requireAuth, adminGuard(), async (c) => {
+    const [parks, buildings, floors] = await Promise.all([
+      queryAll(c.env.DB, "SELECT * FROM parks WHERE deleted_at IS NULL ORDER BY name"),
+      queryAll(c.env.DB, "SELECT * FROM buildings WHERE deleted_at IS NULL ORDER BY name"),
+      queryAll(c.env.DB, "SELECT * FROM floors WHERE deleted_at IS NULL ORDER BY building_id, floor_no"),
+    ]);
+    return c.json({ ok: true, data: { parks, buildings, floors } });
+  });
+
+  app.post("/api/admin/parks", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json() as Record<string, any>;
+    if (!body.code || !body.name) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "园区编码和名称为必填项", requestId: c.get("requestId") } }, 400);
+    }
+    const now = nowIsoUtc();
+    const id = createId();
+    await execute(
+      c.env.DB,
+      `INSERT INTO parks
+        (id, code, normalized_name, name, address, status_code, notes, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, body.code, normalizeCompanyName(body.name), body.name, body.address || null,
+      body.statusCode || "active", body.notes || null, now, user.id, now, user.id,
+    );
+    return c.json({ ok: true, data: { id } }, 201);
+  });
+
+  app.post("/api/admin/buildings", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json() as Record<string, any>;
+    if (!body.parkId || !body.code || !body.name) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "园区、编码和名称为必填项", requestId: c.get("requestId") } }, 400);
+    }
+    const now = nowIsoUtc();
+    const id = createId();
+    await execute(
+      c.env.DB,
+      `INSERT INTO buildings
+        (id, park_id, code, name, total_area, total_floors, status_code, notes, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, body.parkId, body.code, body.name, body.totalArea || null,
+      Number(body.totalFloors || 0), body.statusCode || "active", body.notes || null,
+      now, user.id, now, user.id,
+    );
+    return c.json({ ok: true, data: { id } }, 201);
+  });
+
+  app.post("/api/admin/floors", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json() as Record<string, any>;
+    if (!body.buildingId || !body.floorNo || !body.name) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "楼宇、楼层号和名称为必填项", requestId: c.get("requestId") } }, 400);
+    }
+    const now = nowIsoUtc();
+    const id = createId();
+    await execute(
+      c.env.DB,
+      `INSERT INTO floors
+        (id, building_id, floor_no, name, area, status_code, notes, created_at, created_by, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, body.buildingId, body.floorNo, body.name, body.area || null,
+      body.statusCode || "active", body.notes || null, now, user.id, now, user.id,
     );
     return c.json({ ok: true, data: { id } }, 201);
   });
@@ -202,6 +441,17 @@ export function registerAdminRoutes(app: Hono): void {
   app.get("/api/admin/deleted-records", requireAuth, adminGuard(), async (c) => {
     const db = c.env.DB;
     const entityType = c.req.query("type") || "clues";
+    const allowedTypes = new Set(["clues", "companies", "contacts"]);
+    if (!allowedTypes.has(entityType)) {
+      return c.json({
+        ok: false,
+        error: {
+          code: "INVALID_ENTITY_TYPE",
+          message: "不支持的数据类型",
+          requestId: c.get("requestId"),
+        },
+      }, 400);
+    }
     const rows = await queryAll(
       db,
       `SELECT * FROM ${entityType} WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 100`,
@@ -214,6 +464,17 @@ export function registerAdminRoutes(app: Hono): void {
     const db = c.env.DB;
     const entityType = c.req.param("type");
     const entityId = c.req.param("id");
+    const allowedTypes = new Set(["clues", "companies", "contacts"]);
+    if (!allowedTypes.has(entityType)) {
+      return c.json({
+        ok: false,
+        error: {
+          code: "INVALID_ENTITY_TYPE",
+          message: "不支持的数据类型",
+          requestId: c.get("requestId"),
+        },
+      }, 400);
+    }
     const now = nowIsoUtc();
 
     await execute(

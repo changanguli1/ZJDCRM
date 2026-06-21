@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { logout } from "../features/auth/auth.api";
 import { useAuth } from "../features/auth/auth.store";
+import { useSiteSettings } from "../lib/site-settings";
 
 const adminNavItems = [
   { label: "后台首页", path: "/admin", icon: "📊", end: true },
@@ -19,6 +20,7 @@ const adminNavItems = [
 export default function AdminShell() {
   const { user, csrfToken, clearSession } = useAuth();
   const navigate = useNavigate();
+  const settings = useSiteSettings();
 
   const handleLogout = async () => {
     try { await logout(csrfToken); } catch { /* ignore */ }
@@ -31,7 +33,7 @@ export default function AdminShell() {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <h2>系统管理</h2>
-          <span className="sidebar-subtitle">ZJDCRM 后台</span>
+          <span className="sidebar-subtitle">{settings.site_name || "ZJDCRM"} 后台</span>
         </div>
         <nav className="sidebar-nav" role="navigation" aria-label="管理导航">
           {adminNavItems.map((item) => (

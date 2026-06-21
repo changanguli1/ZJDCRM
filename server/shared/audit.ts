@@ -23,8 +23,10 @@ export async function writeAuditLog(db: D1Database, entry: AuditEntry): Promise<
   const now = nowIsoUtc();
   await execute(
     db,
-    `INSERT INTO audit_logs (id, actor_id, action, entity_type, entity_id, ip_address, user_agent, request_id, summary, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO audit_logs
+      (id, actor_id, action, entity_type, entity_id, ip_address, user_agent,
+       request_id, summary_json, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     entry.actorId,
     entry.action,
@@ -33,7 +35,8 @@ export async function writeAuditLog(db: D1Database, entry: AuditEntry): Promise<
     entry.ipAddress,
     entry.userAgent,
     entry.requestId,
-    entry.summary ? JSON.stringify(entry.summary) : null,
+    JSON.stringify(entry.summary || {}),
     now,
+    entry.actorId,
   );
 }

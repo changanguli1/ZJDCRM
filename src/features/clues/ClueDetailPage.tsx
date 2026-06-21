@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
+import { useAuth } from "../auth/auth.store";
 
 interface ClueDetail {
   id: string;
@@ -49,6 +50,11 @@ export default function ClueDetailPage() {
   const [clue, setClue] = useState<ClueDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { csrfToken } = useAuth();
+  const [contactForm, setContactForm] = useState({ name: "", mobile: "", title: "", isPrimaryDecisionMaker: false });
+  const [followupForm, setFollowupForm] = useState({ methodCode: "phone", content: "", customerFeedback: "", nextAction: "", nextFollowupAt: "" });
+  const [spaceId, setSpaceId] = useState("");
+  const [availableSpaces, setAvailableSpaces] = useState<any[]>([]);
 
   const fetchClue = useCallback(async () => {
     if (!id) return;
@@ -64,6 +70,36 @@ export default function ClueDetailPage() {
   }, [id]);
 
   useEffect(() => { fetchClue(); }, [fetchClue]);
+  useEffect(() => {
+    api.get<any>("/spaces", { pageSize: "100" })
+      .then((data) => setAvailableSpaces(data.items || []))
+      .catch(() => setAvailableSpaces([]));
+  }, []);
+
+  const addContact = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const result = await api.post<any>(`/clues/${id}/contacts`, contactForm, csrfToken);
+    if (result.duplicate) {
+      setError(`手机号已存在：${result.existingName}`);
+      return;
+    }
+    setContactForm({ name: "", mobile: "", title: "", isPrimaryDecisionMaker: false });
+    await fetchClue();
+  };
+
+  const addFollowup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await api.post(`/clues/${id}/followups`, followupForm, csrfToken);
+    setFollowupForm({ methodCode: "phone", content: "", customerFeedback: "", nextAction: "", nextFollowupAt: "" });
+    await fetchClue();
+  };
+
+  const addSpace = async () => {
+    if (!spaceId) return;
+    await api.post(`/clues/${id}/spaces`, { spaceId }, csrfToken);
+    setSpaceId("");
+    await fetchClue();
+  };
 
   if (loading) return <div className="loading-screen"><div className="spinner" /><span>加载中...</span></div>;
   if (error) return <div className="page"><div className="form-error">{error}</div><Link to="/clues" className="btn">返回列表</Link></div>;
@@ -119,6 +155,13 @@ export default function ClueDetailPage() {
       {/* Contacts */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-header">联系人 ({clue.contacts?.length || 0})</div>
+        <form onSubmit={addContact} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <input aria-label="联系人姓名" placeholder="姓名" required value={contactForm.name} onChange={(event) => setContactForm({ ...contactForm, name: event.target.value })} />
+          <input aria-label="联系人手机号" placeholder="手机号" required value={contactForm.mobile} onChange={(event) => setContactForm({ ...contactForm, mobile: event.target.value })} />
+          <input aria-label="联系人职务" placeholder="职务" value={contactForm.title} onChange={(event) => setContactForm({ ...contactForm, title: event.target.value })} />
+          <label><input type="checkbox" checked={contactForm.isPrimaryDecisionMaker} onChange={(event) => setContactForm({ ...contactForm, isPrimaryDecisionMaker: event.target.checked })} /> 决策人</label>
+          <button className="btn btn-sm" type="submit">添加联系人</button>
+        </form>
         {clue.contacts?.length > 0 ? (
           <table>
             <thead><tr><th>姓名</th><th>手机</th><th>职务</th><th>决策人</th></tr></thead>
@@ -141,6 +184,13 @@ export default function ClueDetailPage() {
       {/* Matched Spaces */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-header">备选空间 ({clue.spaces?.length || 0})</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <select aria-label="选择备选空间" value={spaceId} onChange={(event) => setSpaceId(event.target.value)}>
+            <option value="">选择备选空间</option>
+            {availableSpaces.filter((space) => !clue.spaces.some((matched) => matched.id === space.id)).map((space) => <option key={space.id} value={space.id}>{space.park_name} / {space.building_name} / {space.name}</option>)}
+          </select>
+          <button className="btn btn-sm" disabled={!spaceId} onClick={addSpace}>添加空间</button>
+        </div>
         {clue.spaces?.length > 0 ? (
           <table>
             <thead><tr><th>空间</th><th>优先级</th><th>备注</th></tr></thead>
@@ -160,6 +210,16 @@ export default function ClueDetailPage() {
       {/* Followups / Timeline */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-header">跟进时间线</div>
+        <form onSubmit={addFollowup} style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 8, marginBottom: 12 }}>
+          <select aria-label="跟进方式" value={followupForm.methodCode} onChange={(event) => setFollowupForm({ ...followupForm, methodCode: event.target.value })}>
+            <option value="phone">电话</option><option value="wechat">微信</option><option value="visit">拜访</option><option value="meeting">会议</option><option value="email">邮件</option>
+          </select>
+          <textarea aria-label="跟进内容" placeholder="跟进内容" required value={followupForm.content} onChange={(event) => setFollowupForm({ ...followupForm, content: event.target.value })} />
+          <input aria-label="客户反馈" placeholder="客户反馈" value={followupForm.customerFeedback} onChange={(event) => setFollowupForm({ ...followupForm, customerFeedback: event.target.value })} />
+          <input aria-label="下一步动作" placeholder="下一步动作" value={followupForm.nextAction} onChange={(event) => setFollowupForm({ ...followupForm, nextAction: event.target.value })} />
+          <input aria-label="下次跟进时间" type="datetime-local" value={followupForm.nextFollowupAt} onChange={(event) => setFollowupForm({ ...followupForm, nextFollowupAt: event.target.value })} />
+          <button className="btn btn-sm" type="submit">添加跟进</button>
+        </form>
         {clue.followups?.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {clue.followups.map((f: any) => (

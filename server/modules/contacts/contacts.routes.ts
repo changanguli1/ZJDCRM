@@ -6,12 +6,20 @@ import { createId } from "../../shared/ids";
 import { nowIsoUtc } from "../../shared/time";
 import { requireAuth } from "../../middleware/auth";
 import { requireCsrf } from "../../middleware/csrf";
+import { assertClueAccess, buildAccessContext } from "../access/access.service";
+
+async function requireClueAccess(c: any, clueId: string, mode: "read" | "write") {
+  const access = await buildAccessContext(c.env.DB, c.get("user").id);
+  await assertClueAccess(c.env.DB, access, clueId, mode);
+}
 
 export function registerContactRoutes(app: Hono): void {
   // List contacts for a clue
   app.get("/api/clues/:clueId/contacts", requireAuth, async (c) => {
     const db = c.env.DB;
     const clueId = c.req.param("clueId");
+    try { await requireClueAccess(c, clueId, "read"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在", requestId: c.get("requestId") } }, 404); }
     const contacts = await queryAll(
       db,
       `SELECT ct.* FROM clue_contacts cc JOIN contacts ct ON cc.contact_id = ct.id
@@ -28,6 +36,8 @@ export function registerContactRoutes(app: Hono): void {
     const clueId = c.req.param("clueId");
     const body = await c.req.json() as Record<string, string>;
     const requestId = c.get("requestId");
+    try { await requireClueAccess(c, clueId, "write"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在或无权编辑", requestId } }, 404); }
 
     if (!body.name || !body.mobile) {
       return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "联系人姓名和手机号为必填项", requestId } }, 400);
@@ -58,7 +68,7 @@ export function registerContactRoutes(app: Hono): void {
     await execute(
       db,
       `INSERT INTO clue_contacts (id, clue_id, contact_id, relation_type, is_primary, created_at, created_by, updated_at, updated_by)
-       VALUES (?, ?, ?, 'contact', ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'contact', ?, ?, ?, ?, ?)`,
       createId(), clueId, contactId, body.isPrimaryDecisionMaker ? 1 : 0, now, user.id, now, user.id,
     );
 
@@ -70,6 +80,8 @@ export function registerContactRoutes(app: Hono): void {
     const user = c.get("user");
     const db = c.env.DB;
     const { clueId, contactId } = c.req.param();
+    try { await requireClueAccess(c, clueId, "write"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在或无权编辑", requestId: c.get("requestId") } }, 404); }
     const body = await c.req.json() as Record<string, unknown>;
     const now = nowIsoUtc();
 
@@ -88,10 +100,12 @@ export function registerContactRoutes(app: Hono): void {
     const user = c.get("user");
     const db = c.env.DB;
     const { clueId, contactId } = c.req.param();
+    try { await requireClueAccess(c, clueId, "write"); }
+    catch { return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在或无权编辑", requestId: c.get("requestId") } }, 404); }
     const now = nowIsoUtc();
 
     await execute(db, "UPDATE contacts SET deleted_at = ?, deleted_by = ? WHERE id = ?", now, user.id, contactId);
-    await execute(db, "UPDATE clue_contacts SET deleted_at = ?, deleted_by = ? WHERE clue_id = ? AND contact_id = ?", now, user.id, clueId, contactId);
+    await execute(db, "DELETE FROM clue_contacts WHERE clue_id = ? AND contact_id = ?", clueId, contactId);
 
     return c.json({ ok: true, data: null });
   });

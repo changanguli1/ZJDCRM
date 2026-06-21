@@ -9,10 +9,18 @@ export default function DictionariesPage() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ code: "", name: "", category: "" });
   const [showForm, setShowForm] = useState(false);
+  const [itemForms, setItemForms] = useState<Record<string, { code: string; name: string; value: string }>>({});
 
   const fetch = async () => {
     setLoading(true);
     try { setData(await api.get<any>("/admin/dictionaries")); } catch {} finally { setLoading(false); }
+  };
+
+  const addItem = async (dictionaryId: string) => {
+    const item = itemForms[dictionaryId] || { code: "", name: "", value: "" };
+    await api.post(`/admin/dictionaries/${dictionaryId}/items`, item, csrfToken);
+    setItemForms({ ...itemForms, [dictionaryId]: { code: "", name: "", value: "" } });
+    fetch();
   };
   useEffect(() => { fetch(); }, []);
 
@@ -43,6 +51,12 @@ export default function DictionariesPage() {
           {data.dictionaries.map((dict: any) => (
             <div className="card" key={dict.id}>
               <div className="card-header">{dict.name}（{dict.code}）</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <input aria-label={`${dict.name}项目编码`} placeholder="项目编码" value={itemForms[dict.id]?.code || ""} onChange={(event) => setItemForms({ ...itemForms, [dict.id]: { ...(itemForms[dict.id] || { name: "", value: "" }), code: event.target.value } })} />
+                <input aria-label={`${dict.name}项目名称`} placeholder="项目名称" value={itemForms[dict.id]?.name || ""} onChange={(event) => setItemForms({ ...itemForms, [dict.id]: { ...(itemForms[dict.id] || { code: "", value: "" }), name: event.target.value } })} />
+                <input aria-label={`${dict.name}项目值`} placeholder="值" value={itemForms[dict.id]?.value || ""} onChange={(event) => setItemForms({ ...itemForms, [dict.id]: { ...(itemForms[dict.id] || { code: "", name: "" }), value: event.target.value } })} />
+                <button className="btn btn-sm" disabled={!itemForms[dict.id]?.code || !itemForms[dict.id]?.name} onClick={() => addItem(dict.id)}>新增项目</button>
+              </div>
               <table>
                 <thead><tr><th>编码</th><th>名称</th><th>排序</th><th>状态</th></tr></thead>
                 <tbody>
