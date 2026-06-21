@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../auth/auth.store";
+import AttachmentPanel from "./AttachmentPanel";
 
 interface ClueDetail {
   id: string;
@@ -180,6 +181,8 @@ export default function ClueDetailPage() {
           <p className="text-muted">暂无联系人</p>
         )}
       </div>
+
+      <AttachmentPanel clueId={clue.id} csrfToken={csrfToken} />
 
       {/* Matched Spaces */}
       <div className="card" style={{ marginBottom: 16 }}>

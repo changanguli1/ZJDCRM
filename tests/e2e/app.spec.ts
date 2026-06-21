@@ -59,7 +59,7 @@ test.describe("authenticated application", () => {
     await employeeRow.getByRole("button", { name: "编辑" }).click();
     await page.getByLabel("编辑姓名 *").fill("QA User Updated");
     await page.getByRole("button", { name: "保存修改" }).click();
-    await expect(page.getByText("QA User Updated")).toBeVisible();
+    await expect(page.getByRole("row", { name: new RegExp(`qa-${suffix}`) }).getByText("QA User Updated")).toBeVisible();
 
     await page.goto("/imports");
     await page.locator('input[type="file"]').setInputFiles({

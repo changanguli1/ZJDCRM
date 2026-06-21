@@ -551,11 +551,19 @@ export function registerAdminRoutes(app: Hono): void {
     }
     const now = nowIsoUtc();
 
-    await execute(
+    const restored = await execute(
       db,
-      `UPDATE ${entityType} SET deleted_at = NULL, deleted_by = NULL, updated_at = ?, updated_by = ? WHERE id = ?`,
+      `UPDATE ${entityType} SET deleted_at = NULL, deleted_by = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NOT NULL`,
       now, user.id, entityId,
     );
+    if (!restored.meta.changes) {
+      return c.json({ ok: false, error: { code: "NOT_FOUND", message: "已删除记录不存在", requestId: c.get("requestId") } }, 404);
+    }
+    await writeAuditLog(db, {
+      actorId: user.id, action: "admin:record:restore", entityType, entityId,
+      requestId: c.get("requestId"), ipAddress: c.req.header("cf-connecting-ip") || null,
+      userAgent: c.req.header("user-agent") || null, summary: {},
+    });
     return c.json({ ok: true, data: null });
   });
 

@@ -359,6 +359,39 @@ describe("admin safety and account management", () => {
 });
 
 describe("operational workflows", () => {
+  it("stores, downloads, and deletes a clue attachment", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    await env.DB.prepare(
+      `INSERT INTO companies (id, name, normalized_name, main_business, industry_code, status, created_at, created_by, updated_at, updated_by)
+       VALUES ('attachment-company', 'Attachment Company', 'attachment company', 'Attachment', 'other', 'active', ?, 'admin-workflows', ?, 'admin-workflows')`,
+    ).bind(now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO clues (id, company_id, title, stage_code, owner_id, version, created_at, created_by, updated_at, updated_by)
+       VALUES ('attachment-clue', 'attachment-company', 'Attachment clue', 'new', 'admin-workflows', 1, ?, 'admin-workflows', ?, 'admin-workflows')`,
+    ).bind(now, now).run();
+    const form = new FormData();
+    form.set("file", new File(["attachment contents"], "note.txt", { type: "text/plain" }));
+    const upload = await createApi().request("http://localhost/api/clues/attachment-clue/attachments", {
+      method: "POST", headers: { cookie, "x-csrf-token": csrfToken }, body: form,
+    }, env);
+    expect(upload.status).toBe(201);
+    const attachment = (await upload.json() as any).data;
+    const download = await createApi().request(`http://localhost/api/attachments/${attachment.id}/download`, { headers: { cookie } }, env);
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe("attachment contents");
+    const deleted = await request("DELETE", `/api/attachments/${attachment.id}`);
+    expect(deleted.status).toBe(200);
+    expect(await env.DB.prepare("SELECT deleted_at FROM attachments WHERE id = ?").bind(attachment.id).first()).toMatchObject({ deleted_at: expect.any(String) });
+  });
+
+  it("audits restoration of a supported deleted record", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    await env.DB.prepare("UPDATE clues SET deleted_at = ?, deleted_by = ? WHERE id = 'attachment-clue'").bind(now, "admin-workflows").run();
+    const restored = await request("POST", "/api/admin/deleted-records/clues/attachment-clue/restore", {});
+    expect(restored.status).toBe(200);
+    expect(await env.DB.prepare("SELECT action FROM audit_logs WHERE entity_id = 'attachment-clue' ORDER BY created_at DESC LIMIT 1").first()).toMatchObject({ action: "admin:record:restore" });
+  });
+
   it("serves reports and import job lists", async () => {
     const reports = await request("GET", "/api/reports");
     expect(reports.status).toBe(200);

@@ -66,4 +66,13 @@ export const api = {
 
   delete: <T>(path: string, csrfToken?: string) =>
     request<T>("DELETE", path, { csrfToken }),
+
+  upload: async <T>(path: string, form: FormData, csrfToken: string): Promise<T> => {
+    const resp = await fetch(`${BASE}${path}`, {
+      method: "POST", headers: { "X-CSRF-Token": csrfToken }, credentials: "include", body: form,
+    });
+    const envelope: ApiEnvelope<T> = await resp.json();
+    if (!envelope.ok) throw new ApiError(envelope.error?.code || "UNKNOWN", envelope.error?.message || "请求失败", envelope.error?.requestId || "");
+    return envelope.data as T;
+  },
 };
