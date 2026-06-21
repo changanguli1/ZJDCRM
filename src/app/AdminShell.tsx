@@ -33,7 +33,7 @@ export default function AdminShell() {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <h2>系统管理</h2>
-          <span className="sidebar-subtitle">{settings.site_name || "ZJDCRM"} 后台</span>
+          <span className="sidebar-subtitle">{settings.site_name || "CFZZS"} 后台</span>
         </div>
         <nav className="sidebar-nav" role="navigation" aria-label="管理导航">
           {adminNavItems.map((item) => (

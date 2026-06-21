@@ -33,7 +33,7 @@ export default function AppShell() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <h2>{settings.site_name || "ZJDCRM"}</h2>
+          <h2>{settings.site_name || "CFZZS"}</h2>
           <span className="sidebar-subtitle">招商线索管理</span>
         </div>
         <nav className="sidebar-nav" role="navigation" aria-label="主导航">

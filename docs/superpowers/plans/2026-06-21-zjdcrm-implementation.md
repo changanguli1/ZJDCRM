@@ -1,8 +1,8 @@
-# ZJDCRM Implementation Plan
+# CFZZS Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build, test, publish, and deploy the PRD-complete V1.0 ZJDCRM application at `cfzzs.custard.top`.
+**Goal:** Build, test, publish, and deploy the PRD-complete V1.0 CFZZS application at `cfzzs.custard.top`.
 
 **Architecture:** A React and TypeScript single-page application is served by Cloudflare Pages. A Hono application running in Pages Functions exposes same-origin APIs, with D1 repositories for relational data, R2 for private attachments and exports, and a scheduled Worker for reminders and file expiry. Authentication, RBAC, data scope, audit logging, and business validation are shared service boundaries rather than controller-specific logic.
 
@@ -82,7 +82,7 @@ import { appName } from "../../src/app/meta";
 
 describe("application metadata", () => {
   it("uses the configured product name", () => {
-    expect(appName).toBe("ZJDCRM");
+    expect(appName).toBe("CFZZS");
   });
 });
 ```
@@ -125,7 +125,7 @@ npm install -D typescript vite @vitejs/plugin-react vitest @vitest/coverage-v8 j
 Create `src/app/meta.ts`:
 
 ```ts
-export const appName = "ZJDCRM";
+export const appName = "CFZZS";
 export const appDescription = "产业园区招商线索管理系统";
 ```
 

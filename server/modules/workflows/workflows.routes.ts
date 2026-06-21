@@ -273,7 +273,7 @@ export function registerWorkflowRoutes(app: Hono): void {
         (id, export_request_id, storage_key, file_name, content_type, file_size,
          file_hash, expires_at, status, created_at, created_by, updated_at, updated_by)
        VALUES (?, ?, ?, ?, 'text/csv; charset=utf-8', ?, ?, ?, 'ready', ?, ?, ?, ?)`,
-      fileId, request.id, storageKey, `zjdcrm-clues-${now.slice(0, 10)}.csv`,
+      fileId, request.id, storageKey, `cfzzs-clues-${now.slice(0, 10)}.csv`,
       new TextEncoder().encode(csv).byteLength, await sha256Hex(csv), expiresAt,
       now, user.id, now, user.id,
     );

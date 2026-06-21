@@ -39,7 +39,7 @@ export default function LoginPage() {
       <div className="login-card">
         <div className="login-header">
           {settings.logo_url && <img src={settings.logo_url} alt="" style={{ maxHeight: 56, maxWidth: 180 }} />}
-          <h1>{settings.site_name || "ZJDCRM"}</h1>
+          <h1>{settings.site_name || "CFZZS"}</h1>
           <p>{settings.login_text || "产业园区招商线索管理系统"}</p>
         </div>
         {settings.announcement && <div className="card" style={{ marginBottom: 16 }}>{settings.announcement}</div>}

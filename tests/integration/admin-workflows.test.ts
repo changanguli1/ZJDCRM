@@ -478,6 +478,7 @@ describe("operational workflows", () => {
     );
     expect(download.status).toBe(200);
     expect(download.headers.get("content-type")).toContain("text/csv");
+    expect(download.headers.get("content-disposition")).toContain("cfzzs-clues-");
     expect(await download.text()).toContain("线索名称");
   });
 });

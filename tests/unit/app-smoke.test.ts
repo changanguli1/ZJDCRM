@@ -3,6 +3,6 @@ import { appName } from "../../src/app/meta";
 
 describe("application metadata", () => {
   it("uses the configured product name", () => {
-    expect(appName).toBe("ZJDCRM");
+    expect(appName).toBe("CFZZS");
   });
 });

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 async function loginAsAdmin(page: import("@playwright/test").Page) {
   await page.goto("/login");
+  await expect(page).toHaveTitle("CFZZS");
   await page.getByLabel("账号").fill("admin");
   await page.getByLabel("密码").fill("admin123456");
   await page.getByRole("button", { name: "登 录" }).click();
@@ -91,6 +92,25 @@ test.describe("authenticated application", () => {
     await page.getByLabel("跟进内容").fill("完成首次电话跟进");
     await page.getByRole("button", { name: "添加跟进" }).click();
     await expect(page.getByText("完成首次电话跟进")).toBeVisible();
+  });
+
+  test("uploads and deletes a clue attachment", async ({ page }) => {
+    await loginAsAdmin(page);
+    const suffix = Date.now().toString();
+    await page.goto("/clues/new");
+    await page.getByLabel("线索名称 *").fill(`附件线索${suffix}`);
+    await page.getByLabel("企业名称 *").fill(`附件企业${suffix}`);
+    await page.getByRole("button", { name: "保存" }).click();
+
+    await page.getByLabel("上传附件").setInputFiles({
+      name: `attachment-${suffix}.txt`,
+      mimeType: "text/plain",
+      buffer: Buffer.from("CFZZS attachment verification"),
+    });
+    await expect(page.getByText(`attachment-${suffix}.txt`)).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("row", { name: new RegExp(`attachment-${suffix}`) }).getByRole("button", { name: "删除" }).click();
+    await expect(page.getByText(`attachment-${suffix}.txt`)).toHaveCount(0);
   });
 
   test("keeps the dashboard usable without horizontal overflow on a narrow viewport", async ({ page }) => {

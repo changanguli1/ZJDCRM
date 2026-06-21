@@ -1,4 +1,4 @@
--- ZJDCRM Production Seed Data
+-- CFZZS Production Seed Data
 -- Run with: npx wrangler d1 execute zjdcrm-db --remote --file migrations/0005_seed.sql
 
 -- ===== 1. System User (for FK references) =====

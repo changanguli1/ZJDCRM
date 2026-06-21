@@ -1,10 +1,10 @@
-# ZJDCRM 后续 Agent 完整实施 Prompt
+# CFZZS 后续 Agent 完整实施 Prompt
 
 将下面整段内容原样发送给新的编码 Agent：
 
 ---
 
-你现在负责完成一个真实项目：`ZJDCRM`，产业园区招商线索管理系统。
+你现在负责完成一个真实项目：`CFZZS`，产业园区招商线索管理系统。
 
 你的目标不是写 Demo，而是基于现有仓库把 PRD V1.0 实现完整、测试完整，并持续 push 到 GitHub `main`。Cloudflare Pages 已连接 `main`，每次 push 会自动部署到 `https://cfzzs.custard.top`。
 
