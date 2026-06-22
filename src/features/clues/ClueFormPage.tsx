@@ -172,7 +172,7 @@ export default function ClueFormPage() {
         <div className="card">
           <div className="card-header">空间与效益需求</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="form-field"><label htmlFor="desired-area">{t("clue.field.area")} (㎡)</label><input id="desired-area" type="number" value={form.desiredArea} onChange={(e) => set("desiredArea", e.target.value)} /></div>
+            <div className="form-field"><label htmlFor="desired-area">{t("clue.field.area")} (㎡)</label><input id="desired-area" aria-label={t("clue.field.area")} type="number" value={form.desiredArea} onChange={(e) => set("desiredArea", e.target.value)} /></div>
             <div className="form-field"><label>获取日期</label><input type="date" value={form.acquiredAt} onChange={(e) => set("acquiredAt", e.target.value)} /></div>
             <div className="form-field"><label>预计落位日期</label><input type="date" value={form.expectedLandingAt} onChange={(e) => set("expectedLandingAt", e.target.value)} /></div>
             <div className="form-field"><label>核心卡点</label><input value={form.bottleneck} onChange={(e) => set("bottleneck", e.target.value)} /></div>
