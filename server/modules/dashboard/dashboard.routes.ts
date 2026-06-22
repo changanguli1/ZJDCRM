@@ -20,7 +20,7 @@ export function registerDashboardRoutes(app: Hono): void {
     const departmentId = c.req.query("departmentId");
     const parkId = c.req.query("parkId");
     const dateFilter = "AND c.created_at >= ? AND c.created_at <= ?";
-    const audienceClauses: string[] = [];
+    const audienceClauses: string[] = ["NOT EXISTS (SELECT 1 FROM park_operator_assignments poa WHERE poa.user_id = c.owner_id)"];
     const audienceParams: unknown[] = [];
     if (ownerId) { audienceClauses.push("c.owner_id = ?"); audienceParams.push(ownerId); }
     if (departmentId) { audienceClauses.push("c.department_id = ?"); audienceParams.push(departmentId); }
@@ -57,6 +57,13 @@ export function registerDashboardRoutes(app: Hono): void {
     const expectedOutput = await queryOne<{ output: number; tax: number }>(
       db, `SELECT COALESCE(SUM(c.expected_output), 0) as output, COALESCE(SUM(c.expected_tax), 0) as tax FROM clues c WHERE c.deleted_at IS NULL ${scopeSql} ${audienceSql}`, ...scopeParams, ...audienceParams,
     );
+    const targets = departmentId ? await queryAll<{ metric_code: string; target_value: number }>(
+      db,
+      `SELECT metric_code, target_value FROM team_kpi_targets
+       WHERE department_id = ? AND start_date <= ? AND end_date >= ?
+       ORDER BY metric_code`,
+      departmentId, endDate, startDate,
+    ) : [];
 
     const milestones = await queryOne<{ visits: number; tours: number; signed_area: number }>(db,
       `SELECT
@@ -92,6 +99,7 @@ export function registerDashboardRoutes(app: Hono): void {
         visitCount: milestones?.visits || 0,
         tourCount: milestones?.tours || 0,
         signedArea: milestones?.signed_area || 0,
+        targets,
         landedCount: signedLanded?.landed || 0,
         expectedArea: expectedArea?.total || 0,
         expectedOutput: expectedOutput?.output || 0,

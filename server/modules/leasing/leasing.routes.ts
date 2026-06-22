@@ -181,4 +181,52 @@ export function registerLeasingRoutes(app: Hono): void {
     await writeAuditLog(db, { actorId: user.id, action: "space_allocation:release-lock", entityType: "space_allocation", entityId: allocation.id, requestId: c.get("requestId"), ipAddress: c.req.header("cf-connecting-ip") || null, userAgent: c.req.header("user-agent") || null, summary: { releasedArea: remaining } });
     return c.json({ ok: true, data: { id: allocation.id, releasedArea: remaining } });
   });
+
+  app.post("/api/space-allocations/:id/change", requireAuth, requireCsrf, async (c) => {
+    const user = c.get("user"); const db = c.env.DB; const body = await c.req.json() as any;
+    try { await requireAdmin(c); } catch { return failure(c, 403, "FORBIDDEN", "仅管理员可以变更已确认合同"); }
+    const allocation = await queryOne<any>(db, "SELECT * FROM space_allocations WHERE id = ? AND status_code = 'active'", c.req.param("id"));
+    if (!allocation) return failure(c, 404, "NOT_FOUND", "已确认空间分配不存在");
+    const nextSignedArea = Number(body.signedArea);
+    if (!(nextSignedArea > 0) || Number(body.rentPerSqmDay) < 0 || Number(body.propertyFeePerSqmDay) < 0 || !body.contractStartAt || !body.contractEndAt || !String(body.reason || "").trim()) {
+      return failure(c, 400, "VALIDATION_ERROR", "面积、租金、物业费、起止日期和变更原因必填");
+    }
+    const space = await queryOne<any>(db, "SELECT * FROM spaces WHERE id = ?", allocation.space_id);
+    const oldSignedArea = Number(allocation.signed_area);
+    const delta = nextSignedArea - oldSignedArea;
+    if (delta > 0 && Number(space.available_area) + Number(allocation.locked_remainder_area) < delta) {
+      return failure(c, 400, "INSUFFICIENT_SPACE_AREA", "空间可用面积不足，不能增加合同面积");
+    }
+    const now = nowIsoUtc();
+    const consumeLocked = delta > 0 ? Math.min(delta, Number(allocation.locked_remainder_area)) : 0;
+    const consumeAvailable = delta > 0 ? delta - consumeLocked : delta;
+    await batch(db, [
+      {
+        sql: `UPDATE space_allocations SET signed_area = ?, locked_remainder_area = locked_remainder_area - ?, rent_per_sqm_day = ?, property_fee_per_sqm_day = ?, contract_start_at = ?, contract_end_at = ?, rent_free_days = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
+        values: [nextSignedArea, consumeLocked, Number(body.rentPerSqmDay), Number(body.propertyFeePerSqmDay), body.contractStartAt, body.contractEndAt, body.rentFreeDays ?? allocation.rent_free_days, now, user.id, allocation.id],
+      },
+      {
+        sql: "UPDATE spaces SET available_area = available_area - ?, locked_area = CASE WHEN locked_area >= ? THEN locked_area - ? ELSE 0 END, updated_at = ?, updated_by = ? WHERE id = ?",
+        values: [consumeAvailable, consumeLocked, consumeLocked, now, user.id, allocation.space_id],
+      },
+    ]);
+    await writeAuditLog(db, { actorId: user.id, action: "space_allocation:change", entityType: "space_allocation", entityId: allocation.id, requestId: c.get("requestId"), ipAddress: c.req.header("cf-connecting-ip") || null, userAgent: c.req.header("user-agent") || null, summary: { fromArea: oldSignedArea, toArea: nextSignedArea, reason: String(body.reason).trim() } });
+    return c.json({ ok: true, data: { id: allocation.id, signedArea: nextSignedArea } });
+  });
+
+  app.post("/api/space-allocations/:id/terminate", requireAuth, requireCsrf, async (c) => {
+    const user = c.get("user"); const db = c.env.DB; const body = await c.req.json() as any;
+    try { await requireAdmin(c); } catch { return failure(c, 403, "FORBIDDEN", "仅管理员可以终止合同"); }
+    const allocation = await queryOne<any>(db, "SELECT * FROM space_allocations WHERE id = ? AND status_code = 'active'", c.req.param("id"));
+    if (!allocation) return failure(c, 404, "NOT_FOUND", "已确认空间分配不存在");
+    if (!String(body.reason || "").trim()) return failure(c, 400, "VALIDATION_ERROR", "终止原因必填");
+    const now = nowIsoUtc();
+    const locked = Number(allocation.locked_remainder_area);
+    await batch(db, [
+      { sql: "UPDATE space_allocations SET status_code = 'terminated', released_at = ?, release_reason = ?, locked_remainder_area = 0, updated_at = ?, updated_by = ? WHERE id = ?", values: [now, String(body.reason).trim(), now, user.id, allocation.id] },
+      { sql: "UPDATE spaces SET available_area = available_area + ?, locked_area = CASE WHEN locked_area >= ? THEN locked_area - ? ELSE 0 END, updated_at = ?, updated_by = ? WHERE id = ?", values: [allocation.signed_area, locked, locked, now, user.id, allocation.space_id] },
+    ]);
+    await writeAuditLog(db, { actorId: user.id, action: "space_allocation:terminate", entityType: "space_allocation", entityId: allocation.id, requestId: c.get("requestId"), ipAddress: c.req.header("cf-connecting-ip") || null, userAgent: c.req.header("user-agent") || null, summary: { reason: String(body.reason).trim(), releasedArea: allocation.signed_area } });
+    return c.json({ ok: true, data: { id: allocation.id, status: "terminated" } });
+  });
 }

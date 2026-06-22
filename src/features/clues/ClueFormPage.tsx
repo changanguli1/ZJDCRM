@@ -36,7 +36,7 @@ type DictionaryItem = { id: string; code: string; name: string; value: string };
 const defaultForm: FormData = {
   title: "", companyName: "", mainBusiness: "", industryCode: "other",
   desiredArea: "", acquiredAt: new Date().toISOString().split("T")[0],
-  expectedLandingAt: "", stageCode: "new", bottleneck: "", sourceCode: "",
+  expectedLandingAt: "", stageCode: "new", bottleneck: "", sourceCode: "self_developed",
   internalReferralFlag: false, financingFlag: false,
   priorLocation: "", lostReason: "", fiscalCompletion: "",
   expectedOutput: "", expectedTax: "", actualSpaceId: "", actualArea: "",

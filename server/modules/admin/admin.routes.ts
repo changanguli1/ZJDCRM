@@ -506,6 +506,94 @@ export function registerAdminRoutes(app: Hono): void {
     return c.json({ ok: true, data: { id } }, 201);
   });
 
+  app.post("/api/admin/spaces/import-preview", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const rows = ((await c.req.json()) as any).rows || [];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "导入行不能为空", requestId: c.get("requestId") } }, 400);
+    }
+    const seen = new Set<string>();
+    const items: any[] = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index] || {};
+      const key = [row.parkCode, row.buildingCode, row.floorNo, row.spaceCode].map((value) => String(value || "").trim()).join("|");
+      const errors: string[] = [];
+      if (!row.parkCode || !row.buildingCode || !row.floorNo || !row.spaceCode || !row.spaceName || Number(row.area) <= 0) errors.push("园区/楼栋/楼层/空间编码、名称和面积必填");
+      if (seen.has(key)) errors.push("导入文件内编码重复");
+      seen.add(key);
+      const existing = errors.length ? null : await queryOne<any>(c.env.DB,
+        `SELECT s.id FROM spaces s JOIN floors f ON f.id = s.floor_id JOIN buildings b ON b.id = f.building_id JOIN parks p ON p.id = b.park_id
+         WHERE p.code = ? AND b.code = ? AND f.floor_no = ? AND s.code = ? AND s.deleted_at IS NULL`,
+        row.parkCode, row.buildingCode, String(row.floorNo), row.spaceCode);
+      items.push({ index, key, action: existing ? "update" : "create", existingSpaceId: existing?.id || null, errors, row });
+    }
+    return c.json({ ok: true, data: { items, rows } });
+  });
+
+  app.post("/api/admin/spaces/import-apply", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const rows = ((await c.req.json()) as any).rows || [];
+    const now = nowIsoUtc();
+    let created = 0; let updated = 0;
+    for (const row of rows) {
+      const parkCode = String(row.parkCode || "").trim();
+      const buildingCode = String(row.buildingCode || "").trim();
+      const floorNo = String(row.floorNo || "").trim();
+      const spaceCode = String(row.spaceCode || "").trim();
+      if (!parkCode || !buildingCode || !floorNo || !spaceCode || !row.spaceName || Number(row.area) <= 0) continue;
+      let park = await queryOne<any>(c.env.DB, "SELECT id FROM parks WHERE code = ? AND deleted_at IS NULL", parkCode);
+      if (!park) {
+        park = { id: createId() };
+        await execute(c.env.DB, "INSERT INTO parks (id, code, normalized_name, name, status_code, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+          park.id, parkCode, normalizeCompanyName(row.parkName || parkCode), row.parkName || parkCode, now, user.id, now, user.id);
+      }
+      let building = await queryOne<any>(c.env.DB, "SELECT id FROM buildings WHERE park_id = ? AND code = ? AND deleted_at IS NULL", park.id, buildingCode);
+      if (!building) {
+        building = { id: createId() };
+        await execute(c.env.DB, "INSERT INTO buildings (id, park_id, code, name, status_code, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+          building.id, park.id, buildingCode, row.buildingName || buildingCode, now, user.id, now, user.id);
+      }
+      let floor = await queryOne<any>(c.env.DB, "SELECT id FROM floors WHERE building_id = ? AND floor_no = ? AND deleted_at IS NULL", building.id, floorNo);
+      if (!floor) {
+        floor = { id: createId() };
+        await execute(c.env.DB, "INSERT INTO floors (id, building_id, floor_no, name, area, status_code, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+          floor.id, building.id, floorNo, row.floorName || `${floorNo}层`, row.floorArea || null, now, user.id, now, user.id);
+      }
+      const existing = await queryOne<any>(c.env.DB, "SELECT * FROM spaces WHERE floor_id = ? AND code = ? AND deleted_at IS NULL", floor.id, spaceCode);
+      const newArea = Number(row.area);
+      const target = Math.max(0, Number(row.effectiveReserveTarget || 0));
+      if (existing) {
+        const signedArea = Math.max(0, Number(existing.area || 0) - Number(existing.available_area || 0));
+        const nextAvailable = Math.max(0, newArea - signedArea);
+        await execute(c.env.DB, "UPDATE spaces SET name = ?, area = ?, available_area = ?, effective_reserve_target = ?, notes = ?, updated_at = ?, updated_by = ? WHERE id = ?",
+          row.spaceName, newArea, nextAvailable, target, row.notes || existing.notes || null, now, user.id, existing.id);
+        updated += 1;
+      } else {
+        const id = createId();
+        await execute(c.env.DB, "INSERT INTO spaces (id, floor_id, code, name, area, available_area, status_code, effective_reserve_target, notes, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)",
+          id, floor.id, spaceCode, row.spaceName, newArea, newArea, target, row.notes || null, now, user.id, now, user.id);
+        created += 1;
+      }
+    }
+    return c.json({ ok: true, data: { created, updated } });
+  });
+
+  app.put("/api/admin/team-kpi-targets", requireAuth, requireCsrf, adminGuard(), async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json() as any;
+    if (!body.departmentId || !body.startDate || !body.endDate || !body.metrics || typeof body.metrics !== "object") {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "部门、日期区间和目标为必填项", requestId: c.get("requestId") } }, 400);
+    }
+    const now = nowIsoUtc();
+    for (const [metricCode, targetValue] of Object.entries(body.metrics)) {
+      await execute(c.env.DB,
+        `INSERT INTO team_kpi_targets (id, department_id, start_date, end_date, metric_code, target_value, created_at, created_by, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(department_id, start_date, end_date, metric_code) DO UPDATE SET target_value = excluded.target_value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+        createId(), body.departmentId, body.startDate, body.endDate, metricCode, Number(targetValue), now, user.id, now, user.id);
+    }
+    return c.json({ ok: true, data: null });
+  });
+
   // ==================== AUDIT LOGS ====================
   app.get("/api/admin/audit-logs", requireAuth, adminGuard(), async (c) => {
     const db = c.env.DB;
