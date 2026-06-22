@@ -1,5 +1,5 @@
 import { applyD1Migrations, env } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApi } from "../../server/app";
 import { hashPassword } from "../../server/shared/crypto";
 
@@ -84,6 +84,11 @@ beforeAll(async () => {
   });
   cookie = login.headers.get("set-cookie") || "";
   csrfToken = login.body.data?.csrfToken || "";
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete (env as any).OPENCODE_GO_API_KEY;
 });
 
 describe("admin safety and account management", () => {
@@ -473,6 +478,44 @@ describe("operational workflows", () => {
       "SELECT title FROM clues WHERE title = 'Imported clue'",
     ).first<{ title: string }>();
     expect(imported?.title).toBe("Imported clue");
+  });
+
+  it("applies compact AI preview patches without replacing workbook rows", async () => {
+    (env as any).OPENCODE_GO_API_KEY = "test-opencode-key";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: "```json\n{\"patches\":[{\"index\":0,\"industryCode\":\"integrated_circuit\",\"stageCode\":\"site_visit\",\"tags\":[\"AI校正\"]}],\"warnings\":[\"已校正行业\"]}\n```",
+          },
+        },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    const response = await request("POST", "/api/imports/ai-preview", {
+      workbook: {
+        sheets: [
+          {
+            name: "杨怡喆客户储备",
+            rows: [
+              ["储备客户名称", "客户主营业务", "所属行业", "意向跟进阶段", "渠道来源"],
+              ["芯测科技", "芯片测试设备", "其他", "储备", "自拓"],
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.leadRows).toHaveLength(1);
+    expect(response.body.data.leadRows[0]).toMatchObject({
+      companyName: "芯测科技",
+      industryCode: "integrated_circuit",
+      stageCode: "site_visit",
+    });
+    expect(response.body.data.leadRows[0].tags).toContain("客户储备");
+    expect(response.body.data.leadRows[0].tags).toContain("AI校正");
+    expect(response.body.data.warnings).toContain("已校正行业");
   });
 
   it("imports AI-normalized workbook leads with tags, followups, spaces, and matches", async () => {

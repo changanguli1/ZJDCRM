@@ -142,6 +142,18 @@ async function ensureImportedSpace(db: D1Database, row: Record<string, any>, use
 async function requestAiImportReview(env: any, preview: any): Promise<any | null> {
   const apiKey = String(env.OPENCODE_GO_API_KEY || "").trim();
   if (!apiKey) return null;
+  const compactRows = preview.leadRows.slice(0, 200).map((row: any, index: number) => ({
+    index,
+    companyName: row.companyName,
+    mainBusiness: row.mainBusiness,
+    sourceSheet: row.sourceSheet,
+    sourceCode: row.sourceCode,
+    industryCode: row.industryCode,
+    stageCode: row.stageCode,
+    tags: row.tags,
+    bottleneck: row.bottleneck,
+    followupSummary: String(row.followupContent || "").slice(0, 180),
+  }));
   const response = await fetch("https://opencode.ai/zen/go/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -152,16 +164,19 @@ async function requestAiImportReview(env: any, preview: any): Promise<any | null
       model: "mimo-v2.5",
       reasoning_effort: "high",
       temperature: 0,
-      max_tokens: 9000,
+      max_tokens: 6000,
       messages: [
         {
           role: "user",
           content: [
             "你是 CFZZS 招商台账导入校验器。只返回 JSON。",
-            "检查以下已由规则解析的 preview，修正明显的行业、渠道、阶段错误。",
-            "不要新增不存在的客户。title 必须优先使用公司名，不要使用长备注。",
-            "返回格式：{\"leadRows\": [...], \"warnings\": [...] }。",
-            JSON.stringify({ leadRows: preview.leadRows.slice(0, 200), warnings: preview.warnings }),
+            "下面 rows 已由规则解析。请只指出需要修正的字段，不要原样返回全部 rows。",
+            "允许修正字段：industryCode、sourceCode、stageCode、tags。不要新增不存在的客户，不要改 title/companyName。",
+            "合法行业：medical_devices, pharma, ai, integrated_circuit, smart_manufacturing, other。",
+            "合法渠道：activity, referral, gov, visit, null。",
+            "合法阶段：new, initial_contact, site_visit, signed, landed, lost。",
+            "返回格式严格为：{\"patches\":[{\"index\":0,\"industryCode\":\"...\",\"sourceCode\":\"...\",\"stageCode\":\"...\",\"tags\":[\"...\"]}],\"warnings\":[]}",
+            JSON.stringify({ rows: compactRows, warnings: preview.warnings }),
           ].join("\n"),
         },
       ],
@@ -171,7 +186,11 @@ async function requestAiImportReview(env: any, preview: any): Promise<any | null
   const body = await response.json() as any;
   const content = body?.choices?.[0]?.message?.content;
   if (!content) return null;
-  const parsed = JSON.parse(String(content).replace(/^```json|```$/g, "").trim());
+  const text = String(content).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/g, "").trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("AI 校验没有返回完整 JSON，已使用规则解析结果");
+  const parsed = JSON.parse(text.slice(start, end + 1));
   return parsed && typeof parsed === "object" ? parsed : null;
 }
 
@@ -233,7 +252,17 @@ export function registerWorkflowRoutes(app: Hono): void {
     const preview = buildWorkbookImportPreview(workbook);
     try {
       const ai = await requestAiImportReview(c.env, preview);
-      if (ai?.leadRows && Array.isArray(ai.leadRows)) {
+      if (ai?.patches && Array.isArray(ai.patches)) {
+        for (const patch of ai.patches) {
+          const index = Number(patch?.index);
+          const row = Number.isInteger(index) ? preview.leadRows[index] : null;
+          if (!row) continue;
+          if (patch.industryCode) row.industryCode = String(patch.industryCode);
+          if (Object.prototype.hasOwnProperty.call(patch, "sourceCode")) row.sourceCode = patch.sourceCode ? String(patch.sourceCode) : null;
+          if (patch.stageCode) row.stageCode = String(patch.stageCode);
+          if (Array.isArray(patch.tags)) row.tags = [...new Set([...row.tags, ...patch.tags.map(String).filter(Boolean)])];
+        }
+      } else if (ai?.leadRows && Array.isArray(ai.leadRows)) {
         preview.leadRows = ai.leadRows.map((row: any, index: number) => ({
           ...preview.leadRows[index],
           ...row,
