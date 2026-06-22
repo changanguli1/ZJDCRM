@@ -352,8 +352,8 @@ export function registerClueRoutes(app: Hono): void {
       return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在或无权编辑", requestId } }, 404);
     }
 
-    const existing = await queryOne<{ version: number; stage_code: string }>(
-      db, "SELECT version, stage_code FROM clues WHERE id = ? AND deleted_at IS NULL", clueId,
+    const existing = await queryOne<{ version: number; stage_code: string; company_id: string }>(
+      db, "SELECT version, stage_code, company_id FROM clues WHERE id = ? AND deleted_at IS NULL", clueId,
     );
 
     if (!existing) return c.json({ ok: false, error: { code: "NOT_FOUND", message: "线索不存在", requestId } }, 404);
@@ -453,7 +453,22 @@ export function registerClueRoutes(app: Hono): void {
       updateParams.push(body.departmentId);
     }
 
-    if (updateFields.length > 0) {
+    const companyUpdateFields: string[] = [];
+    const companyUpdateParams: unknown[] = [];
+    if (body.companyName !== undefined && String(body.companyName).trim()) {
+      companyUpdateFields.push("name = ?", "normalized_name = ?");
+      companyUpdateParams.push(String(body.companyName).trim(), normalizeCompanyName(String(body.companyName)));
+    }
+    if (body.mainBusiness !== undefined) {
+      companyUpdateFields.push("main_business = ?");
+      companyUpdateParams.push(body.mainBusiness || "");
+    }
+    if (body.industryCode !== undefined) {
+      companyUpdateFields.push("industry_code = ?");
+      companyUpdateParams.push(body.industryCode || "other");
+    }
+
+    if (updateFields.length > 0 || companyUpdateFields.length > 0) {
       updateFields.push("version = ?", "updated_at = ?", "updated_by = ?");
       updateParams.push(newVersion, now, user.id);
       updateParams.push(clueId);
@@ -463,6 +478,16 @@ export function registerClueRoutes(app: Hono): void {
         `UPDATE clues SET ${updateFields.join(", ")} WHERE id = ?`,
         ...updateParams,
       );
+
+      if (companyUpdateFields.length > 0) {
+        companyUpdateFields.push("updated_at = ?", "updated_by = ?", "version = version + 1");
+        companyUpdateParams.push(now, user.id, existing.company_id);
+        await execute(
+          db,
+          `UPDATE companies SET ${companyUpdateFields.join(", ")} WHERE id = ? AND deleted_at IS NULL`,
+          ...companyUpdateParams,
+        );
+      }
     }
 
     await writeAuditLog(db, {

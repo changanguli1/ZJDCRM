@@ -682,6 +682,74 @@ describe("operational workflows", () => {
     });
   });
 
+  it("updates company fields together with the maintained clue", async () => {
+    const created = await request("POST", "/api/clues", {
+      title: "待维护项目",
+      companyName: "待维护企业",
+      mainBusiness: "原主营业务",
+      industryCode: "other",
+    });
+    const clue = await env.DB.prepare("SELECT id, version FROM clues WHERE id = ?").bind(created.body.data?.id).first<{ id: string; version: number }>();
+
+    const updated = await request("PUT", `/api/clues/${clue?.id}`, {
+      version: clue?.version,
+      title: "统一维护后的项目",
+      companyName: "统一维护后的企业",
+      mainBusiness: "医疗器械研发",
+      industryCode: "medical_devices",
+    });
+
+    expect(updated.status).toBe(200);
+    const stored = await env.DB.prepare(
+      `SELECT c.title, co.name AS company_name, co.main_business, co.industry_code
+       FROM clues c JOIN companies co ON co.id = c.company_id WHERE c.id = ?`,
+    ).bind(clue?.id).first();
+    expect(stored).toMatchObject({
+      title: "统一维护后的项目",
+      company_name: "统一维护后的企业",
+      main_business: "医疗器械研发",
+      industry_code: "medical_devices",
+    });
+  });
+
+  it("updates an existing contact and keeps the clue primary contact in sync", async () => {
+    const created = await request("POST", "/api/clues", {
+      title: "联系人维护线索",
+      companyName: "联系人维护企业",
+      mainBusiness: "测试",
+      industryCode: "other",
+    });
+    const clueId = created.body.data?.id;
+    const added = await request("POST", `/api/clues/${clueId}/contacts`, {
+      name: "原联系人",
+      mobile: "13800000123",
+      title: "招商主管",
+      isPrimaryDecisionMaker: false,
+    });
+    const contactId = added.body.data?.id;
+
+    const updated = await request("PUT", `/api/clues/${clueId}/contacts/${contactId}`, {
+      name: "修改后联系人",
+      mobile: "13800000999",
+      title: "总经理",
+      isPrimaryDecisionMaker: true,
+    });
+
+    expect(updated.status).toBe(200);
+    const stored = await env.DB.prepare(
+      `SELECT ct.name, ct.mobile, ct.title, ct.is_primary_decision_maker, cc.is_primary
+       FROM contacts ct JOIN clue_contacts cc ON cc.contact_id = ct.id
+       WHERE cc.clue_id = ? AND ct.id = ?`,
+    ).bind(clueId, contactId).first();
+    expect(stored).toMatchObject({
+      name: "修改后联系人",
+      mobile: "13800000999",
+      title: "总经理",
+      is_primary_decision_maker: 1,
+      is_primary: 1,
+    });
+  });
+
   it("creates, approves, and downloads an export file", async () => {
     const created = await request("POST", "/api/export-requests", {
       reason: "Quarterly review",

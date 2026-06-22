@@ -313,8 +313,7 @@ export default function ClueListPage() {
                   <td>{clue.financing_flag ? "是" : "否"}</td>
                   <td>{formatDate(clue.updated_at)}</td>
                   <td>
-                    <Link to={`/clues/${clue.id}`} className="btn btn-ghost btn-sm">查看</Link>
-                    <Link to={`/clues/${clue.id}/edit`} className="btn btn-ghost btn-sm">{t("clue.action.edit")}</Link>
+                    <Link to={`/clues/${clue.id}`} className="btn btn-ghost btn-sm">维护</Link>
                   </td>
                 </tr>
               ))}

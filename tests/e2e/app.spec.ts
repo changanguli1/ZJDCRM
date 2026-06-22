@@ -95,6 +95,34 @@ test.describe("authenticated application", () => {
     await expect(page.getByText("完成首次电话跟进")).toBeVisible();
   });
 
+  test("maintains project information and existing contacts from one clue workspace", async ({ page }) => {
+    await loginAsAdmin(page);
+    const suffix = Date.now().toString();
+    await page.goto("/clues/new");
+    await page.getByLabel("线索名称 *").fill(`统一维护线索${suffix}`);
+    await page.getByLabel("企业名称 *").fill(`统一维护企业${suffix}`);
+    await page.getByRole("button", { name: "保存" }).click();
+
+    await page.getByLabel("联系人姓名").fill("原联系人");
+    await page.getByLabel("联系人手机号").fill(`137${suffix.slice(-8)}`);
+    await page.getByRole("button", { name: "添加联系人" }).click();
+    await page.getByRole("button", { name: "编辑联系人" }).click();
+    await page.getByLabel("编辑联系人姓名").fill("修改后联系人");
+    await page.getByRole("button", { name: "保存联系人" }).click();
+    await expect(page.getByText("修改后联系人")).toBeVisible();
+
+    await page.getByRole("button", { name: "编辑项目信息" }).click();
+    await page.getByLabel("编辑线索名称").fill(`已维护线索${suffix}`);
+    await page.getByRole("button", { name: "保存项目信息" }).click();
+    await expect(page.getByRole("heading", { name: `已维护线索${suffix}` })).toBeVisible();
+
+    await page.goto("/clues");
+    const row = page.locator("tbody tr").filter({ has: page.getByRole("link", { name: `已维护线索${suffix}` }) });
+    await expect(row.first().getByRole("link", { name: "维护", exact: true })).toBeVisible();
+    await expect(row.first().getByRole("link", { name: "查看", exact: true })).toHaveCount(0);
+    await expect(row.first().getByRole("link", { name: "编辑", exact: true })).toHaveCount(0);
+  });
+
   test("uploads and deletes a clue attachment", async ({ page }) => {
     await loginAsAdmin(page);
     const suffix = Date.now().toString();

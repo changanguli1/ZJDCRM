@@ -27,6 +27,7 @@ interface ClueDetail {
   owner_id: string;
   department_id: string | null;
   actual_area: number | null;
+  actual_space_id: string | null;
   actual_landing_at: string | null;
   actual_fiscal_completion: string | null;
   created_at: string;
@@ -37,6 +38,42 @@ interface ClueDetail {
   followups: any[];
   spaces: any[];
   stageHistory: any[];
+}
+
+type ProjectForm = {
+  title: string;
+  companyName: string;
+  mainBusiness: string;
+  industryCode: string;
+  sourceCode: string;
+  stageCode: string;
+  stageReason: string;
+  desiredArea: string;
+  acquiredAt: string;
+  expectedLandingAt: string;
+  bottleneck: string;
+  internalReferralFlag: boolean;
+  financingFlag: boolean;
+  priorLocation: string;
+  lostReason: string;
+  fiscalCompletion: string;
+  expectedOutput: string;
+  expectedTax: string;
+  actualSpaceId: string;
+  actualArea: string;
+  actualLandingAt: string;
+  actualFiscalCompletion: string;
+};
+
+function clueToProjectForm(clue: ClueDetail): ProjectForm {
+  return {
+    title: clue.title || "", companyName: clue.company_name || "", mainBusiness: clue.main_business || "", industryCode: clue.industry_code || "other",
+    sourceCode: clue.source_code || "", stageCode: clue.stage_code || "new", stageReason: "", desiredArea: clue.desired_area?.toString() || "",
+    acquiredAt: clue.acquired_at?.slice(0, 10) || "", expectedLandingAt: clue.expected_landing_at?.slice(0, 10) || "", bottleneck: clue.bottleneck || "",
+    internalReferralFlag: !!clue.internal_referral_flag, financingFlag: !!clue.financing_flag, priorLocation: clue.prior_location || "",
+    lostReason: clue.lost_reason || "", fiscalCompletion: clue.fiscal_completion || "", expectedOutput: clue.expected_output?.toString() || "", expectedTax: clue.expected_tax?.toString() || "",
+    actualSpaceId: clue.actual_space_id || "", actualArea: clue.actual_area?.toString() || "", actualLandingAt: clue.actual_landing_at?.slice(0, 10) || "", actualFiscalCompletion: clue.actual_fiscal_completion || "",
+  };
 }
 
 const stageLabels: Record<string, string> = {
@@ -53,9 +90,14 @@ export default function ClueDetailPage() {
   const [error, setError] = useState("");
   const { csrfToken } = useAuth();
   const [contactForm, setContactForm] = useState({ name: "", mobile: "", title: "", isPrimaryDecisionMaker: false });
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
+  const [contactEditForm, setContactEditForm] = useState({ name: "", mobile: "", title: "", isPrimaryDecisionMaker: false });
   const [followupForm, setFollowupForm] = useState({ methodCode: "phone", content: "", customerFeedback: "", nextAction: "", nextFollowupAt: "" });
   const [spaceId, setSpaceId] = useState("");
   const [availableSpaces, setAvailableSpaces] = useState<any[]>([]);
+  const [editingProject, setEditingProject] = useState(false);
+  const [projectForm, setProjectForm] = useState<ProjectForm | null>(null);
+  const [savingProject, setSavingProject] = useState(false);
 
   const fetchClue = useCallback(async () => {
     if (!id) return;
@@ -63,6 +105,7 @@ export default function ClueDetailPage() {
     try {
       const data = await api.get<ClueDetail>(`/clues/${id}`);
       setClue(data);
+      setProjectForm(clueToProjectForm(data));
     } catch (err: any) {
       setError(err.message || "加载失败");
     } finally {
@@ -86,6 +129,39 @@ export default function ClueDetailPage() {
     }
     setContactForm({ name: "", mobile: "", title: "", isPrimaryDecisionMaker: false });
     await fetchClue();
+  };
+
+  const startContactEdit = (contact: any) => {
+    setEditingContactId(contact.id);
+    setContactEditForm({ name: contact.name || "", mobile: contact.mobile || "", title: contact.title || "", isPrimaryDecisionMaker: !!contact.is_primary_decision_maker });
+  };
+
+  const saveContact = async (contactId: string) => {
+    await api.put(`/clues/${id}/contacts/${contactId}`, contactEditForm, csrfToken);
+    setEditingContactId(null);
+    await fetchClue();
+  };
+
+  const deleteContact = async (contactId: string) => {
+    if (!window.confirm("确认删除该联系人吗？")) return;
+    await api.delete(`/clues/${id}/contacts/${contactId}`, csrfToken);
+    await fetchClue();
+  };
+
+  const saveProject = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!clue || !projectForm) return;
+    setSavingProject(true);
+    setError("");
+    try {
+      await api.put(`/clues/${clue.id}`, { ...projectForm, version: clue.version }, csrfToken);
+      setEditingProject(false);
+      await fetchClue();
+    } catch (err: any) {
+      setError(err.message || "项目信息保存失败");
+    } finally {
+      setSavingProject(false);
+    }
   };
 
   const addFollowup = async (event: React.FormEvent) => {
@@ -115,9 +191,37 @@ export default function ClueDetailPage() {
           <p className="text-muted">{clue.company_name} · {clue.main_business}</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Link to={`/clues/${clue.id}/edit`} className="btn">编辑</Link>
+          <button className="btn" onClick={() => { setProjectForm(clueToProjectForm(clue)); setEditingProject((value) => !value); }}>编辑项目信息</button>
         </div>
       </div>
+
+      {error && <div className="form-error" style={{ marginBottom: 16 }}>{error}</div>}
+
+      {editingProject && projectForm && (
+        <form className="card" onSubmit={saveProject} style={{ marginBottom: 16 }}>
+          <div className="card-header">项目信息维护</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+            <div className="form-field"><label htmlFor="edit-clue-title">线索名称</label><input id="edit-clue-title" aria-label="编辑线索名称" required value={projectForm.title} onChange={(event) => setProjectForm({ ...projectForm, title: event.target.value })} /></div>
+            <div className="form-field"><label htmlFor="edit-company-name">企业名称</label><input id="edit-company-name" aria-label="编辑企业名称" required value={projectForm.companyName} onChange={(event) => setProjectForm({ ...projectForm, companyName: event.target.value })} /></div>
+            <div className="form-field"><label>主营业务</label><input value={projectForm.mainBusiness} onChange={(event) => setProjectForm({ ...projectForm, mainBusiness: event.target.value })} /></div>
+            <div className="form-field"><label>行业</label><select value={projectForm.industryCode} onChange={(event) => setProjectForm({ ...projectForm, industryCode: event.target.value })}><option value="medical_devices">医疗器械</option><option value="pharma">医药健康</option><option value="ai">AI/人工智能</option><option value="integrated_circuit">集成电路</option><option value="smart_manufacturing">智能制造</option><option value="other">其他</option></select></div>
+            <div className="form-field"><label>渠道</label><select value={projectForm.sourceCode} onChange={(event) => setProjectForm({ ...projectForm, sourceCode: event.target.value })}><option value="">请选择</option><option value="activity">活动</option><option value="referral">渠道推荐</option><option value="gov">政府推荐</option><option value="visit">拜访</option><option value="internal">内部转介</option></select></div>
+            <div className="form-field"><label>阶段</label><select value={projectForm.stageCode} onChange={(event) => setProjectForm({ ...projectForm, stageCode: event.target.value })}>{Object.entries(stageLabels).map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></div>
+            <div className="form-field"><label>需求面积（㎡）</label><input type="number" value={projectForm.desiredArea} onChange={(event) => setProjectForm({ ...projectForm, desiredArea: event.target.value })} /></div>
+            <div className="form-field"><label>获取意向时间</label><input type="date" value={projectForm.acquiredAt} onChange={(event) => setProjectForm({ ...projectForm, acquiredAt: event.target.value })} /></div>
+            <div className="form-field"><label>预计落位时间</label><input type="date" value={projectForm.expectedLandingAt} onChange={(event) => setProjectForm({ ...projectForm, expectedLandingAt: event.target.value })} /></div>
+            <div className="form-field"><label>核心卡点</label><input value={projectForm.bottleneck} onChange={(event) => setProjectForm({ ...projectForm, bottleneck: event.target.value })} /></div>
+            <div className="form-field"><label>原办公/生产地</label><input value={projectForm.priorLocation} onChange={(event) => setProjectForm({ ...projectForm, priorLocation: event.target.value })} /></div>
+            <div className="form-field"><label>阶段变更原因</label><input required={projectForm.stageCode !== clue.stage_code} value={projectForm.stageReason} onChange={(event) => setProjectForm({ ...projectForm, stageReason: event.target.value })} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 16, marginTop: 12 }}>
+            <label><input type="checkbox" checked={projectForm.internalReferralFlag} onChange={(event) => setProjectForm({ ...projectForm, internalReferralFlag: event.target.checked })} /> 内部转介</label>
+            <label><input type="checkbox" checked={projectForm.financingFlag} onChange={(event) => setProjectForm({ ...projectForm, financingFlag: event.target.checked })} /> 有融资需求</label>
+          </div>
+          {projectForm.stageCode === "lost" && <div className="form-field" style={{ marginTop: 12 }}><label>流失原因</label><textarea required value={projectForm.lostReason} onChange={(event) => setProjectForm({ ...projectForm, lostReason: event.target.value })} /></div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}><button className="btn btn-primary" type="submit" disabled={savingProject}>{savingProject ? "保存中..." : "保存项目信息"}</button><button className="btn" type="button" onClick={() => setEditingProject(false)} disabled={savingProject}>取消</button></div>
+        </form>
+      )}
 
       {/* Info Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
@@ -165,14 +269,23 @@ export default function ClueDetailPage() {
         </form>
         {clue.contacts?.length > 0 ? (
           <table>
-            <thead><tr><th>姓名</th><th>手机</th><th>职务</th><th>决策人</th></tr></thead>
+            <thead><tr><th>姓名</th><th>手机</th><th>职务</th><th>决策人</th><th>操作</th></tr></thead>
             <tbody>
               {clue.contacts.map((c: any) => (
                 <tr key={c.id}>
-                  <td>{c.name}</td>
-                  <td>{c.mobile}</td>
-                  <td>{c.title || "-"}</td>
-                  <td>{c.is_primary_decision_maker ? "★" : ""}</td>
+                  {editingContactId === c.id ? <>
+                    <td><input aria-label="编辑联系人姓名" required value={contactEditForm.name} onChange={(event) => setContactEditForm({ ...contactEditForm, name: event.target.value })} /></td>
+                    <td><input aria-label="编辑联系人手机号" required value={contactEditForm.mobile} onChange={(event) => setContactEditForm({ ...contactEditForm, mobile: event.target.value })} /></td>
+                    <td><input aria-label="编辑联系人职务" value={contactEditForm.title} onChange={(event) => setContactEditForm({ ...contactEditForm, title: event.target.value })} /></td>
+                    <td><input aria-label="编辑联系人决策人" type="checkbox" checked={contactEditForm.isPrimaryDecisionMaker} onChange={(event) => setContactEditForm({ ...contactEditForm, isPrimaryDecisionMaker: event.target.checked })} /></td>
+                    <td><button className="btn btn-ghost btn-sm" type="button" onClick={() => saveContact(c.id)}>保存联系人</button><button className="btn btn-ghost btn-sm" type="button" onClick={() => setEditingContactId(null)}>取消</button></td>
+                  </> : <>
+                    <td>{c.name}</td>
+                    <td>{c.mobile}</td>
+                    <td>{c.title || "-"}</td>
+                    <td>{c.is_primary_decision_maker ? "★" : ""}</td>
+                    <td><button className="btn btn-ghost btn-sm" type="button" onClick={() => startContactEdit(c)}>编辑联系人</button><button className="btn btn-ghost btn-sm" type="button" onClick={() => deleteContact(c.id)}>删除</button></td>
+                  </>}
                 </tr>
               ))}
             </tbody>

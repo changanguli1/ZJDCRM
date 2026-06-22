@@ -85,11 +85,30 @@ export function registerContactRoutes(app: Hono): void {
     const body = await c.req.json() as Record<string, unknown>;
     const now = nowIsoUtc();
 
+    const linked = await queryOne<{ id: string }>(
+      db, "SELECT id FROM clue_contacts WHERE clue_id = ? AND contact_id = ?", clueId, contactId,
+    );
+    if (!linked) {
+      return c.json({ ok: false, error: { code: "NOT_FOUND", message: "联系人不存在或不属于该线索", requestId: c.get("requestId") } }, 404);
+    }
+    if (!body.name || !body.mobile) {
+      return c.json({ ok: false, error: { code: "VALIDATION_ERROR", message: "联系人姓名和手机号为必填项", requestId: c.get("requestId") } }, 400);
+    }
+
     await execute(
       db,
       `UPDATE contacts SET name = ?, mobile = ?, title = ?, email = ?, is_primary_decision_maker = ?, notes = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`,
       body.name, body.mobile, body.title || null, body.email || null,
       body.isPrimaryDecisionMaker ? 1 : 0, body.notes || null, now, user.id, contactId,
+    );
+
+    if (body.isPrimaryDecisionMaker) {
+      await execute(db, "UPDATE clue_contacts SET is_primary = 0, updated_at = ?, updated_by = ? WHERE clue_id = ?", now, user.id, clueId);
+    }
+    await execute(
+      db,
+      "UPDATE clue_contacts SET is_primary = ?, updated_at = ?, updated_by = ? WHERE clue_id = ? AND contact_id = ?",
+      body.isPrimaryDecisionMaker ? 1 : 0, now, user.id, clueId, contactId,
     );
 
     return c.json({ ok: true, data: null });
