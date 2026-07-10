@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "zjdcrm-db",
-      "database_id": "339fd3f2-dc52-4072-9c9a-8dc486d391dd",
+      "database_id": "a1a38fcc-294d-4e3b-94d9-4a65604f3e4d",
       "migrations_dir": "migrations",
       "migrations_table": "d1_migrations",
     },
